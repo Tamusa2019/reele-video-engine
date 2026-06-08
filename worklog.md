@@ -100,3 +100,28 @@ Stage Summary:
 - Frontend properly shows progress with elapsed timer
 - No more infinite loading states
 - All 9 assets (3 AI images + 6 placeholders + voiceover + subtitles + thumbnail) generated successfully
+
+---
+Task ID: 4
+Agent: Main
+Task: Fix "nothing created" issue - upload file serving, video preview, project detail
+
+Work Log:
+- Investigated database: mosquito project has all data (hook, script, 19 scenes, 14 assets, caption, hashtags)
+- Found root cause 1: No upload file serving route existed - /upload/* URLs returned 404
+- Found root cause 2: Video preview showed broken video player for non-existent MP4 files
+- Created /src/app/upload/[...path]/route.ts to serve uploaded files (images, audio, SVGs)
+- Rewrote VideoPreview component to:
+  - Check if video file actually exists via HEAD request before showing player
+  - Show scene thumbnail preview with play button overlay instead
+  - Add expandable scene grid showing all scene images with timing
+  - Show clear message: "Content generated successfully. MP4 rendering requires Remotion integration."
+- Fixed ESLint warning (ImageIcon import)
+- Verified project detail shows all data: Script with hook+full script, 19 scenes with images, 14 assets with download links, caption with hashtags
+
+Stage Summary:
+- Upload file serving now works: images, audio, SVGs all accessible
+- Project detail properly shows generated content even without real MP4
+- Scene preview grid shows thumbnails for each scene
+- All 10 outputs visible: hook, script, scenes, images, voiceover URL, subtitles, thumbnail, caption, hashtags
+- Video rendering (MP4) requires Remotion integration - clearly communicated in UI
