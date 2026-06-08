@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import { IS_PRODUCTION } from '@/lib/config'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
@@ -7,7 +8,7 @@ const globalForPrisma = globalThis as unknown as {
 export const db =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: ['query'],
+    log: IS_PRODUCTION ? ['error', 'warn'] : ['query'],
   })
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db

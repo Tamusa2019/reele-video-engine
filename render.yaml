@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: reele-video-engine
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        value: file:./db/custom.db
+      - key: UPLOAD_DIR
+        value: /opt/render/project/src/upload
+    disk:
+      name: reele-data
+      mountPath: /opt/render/project/src/db
+      sizeGB: 1

@@ -6,8 +6,7 @@
 import ZAI from 'z-ai-web-dev-sdk';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
-
-const UPLOAD_DIR = '/home/z/my-project/upload';
+import { UPLOAD_DIR } from '@/lib/config';
 
 let voiceoverInstance: VoiceoverService | null = null;
 

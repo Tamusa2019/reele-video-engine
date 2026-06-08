@@ -6,8 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, stat } from 'fs/promises';
 import path from 'path';
-
-const UPLOAD_DIR = '/home/z/my-project/upload';
+import { UPLOAD_DIR } from '@/lib/config';
 
 const MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
