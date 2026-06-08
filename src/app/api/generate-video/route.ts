@@ -225,18 +225,30 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Generate thumbnail
+      // Generate thumbnail (skip if rate-limited, use first scene image or placeholder)
       let thumbnailUrl: string | null = null;
       try {
-        thumbnailUrl = await imageService.generateThumbnail(
-          sceneJSON.title,
-          validated.topic,
-          sceneJSON.branding.primaryColor,
-          sceneJSON.branding.accentColor,
-          projectId
-        );
+        // Use first generated image as thumbnail to avoid extra API call
+        const firstImage = imageMap.values().next().value;
+        if (firstImage) {
+          thumbnailUrl = firstImage;
+          console.log('[GenerateVideo] Using first scene image as thumbnail');
+        } else {
+          thumbnailUrl = await imageService.generateThumbnail(
+            sceneJSON.title,
+            validated.topic,
+            sceneJSON.branding.primaryColor,
+            sceneJSON.branding.accentColor,
+            projectId
+          );
+        }
       } catch (error) {
         console.warn('[GenerateVideo] Thumbnail generation failed:', error);
+        // Generate a placeholder thumbnail
+        thumbnailUrl = await imageService.generatePlaceholderImage(
+          `${sceneJSON.title} - ${validated.topic}`,
+          projectId
+        );
       }
 
       // Generate voiceover

@@ -5,11 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Coins, Loader2, CheckCircle2, XCircle, Sparkles } from 'lucide-react';
+import { Coins, Loader2, CheckCircle2, XCircle, Sparkles, Clock } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
 import type { ProjectFormData } from './create-project-view';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PLATFORM_LABELS } from '@/lib/frontend-types';
 
@@ -19,18 +19,21 @@ interface GenerateStep {
 }
 
 export function StepGenerate() {
-  const { watch, reset } = useFormContext<ProjectFormData>();
+  const { watch } = useFormContext<ProjectFormData>();
   const { selectProject, setView } = useAppStore();
   const [steps, setSteps] = useState<GenerateStep[]>([
     { label: 'Generating content...', status: 'pending' },
     { label: 'Creating scenes...', status: 'pending' },
     { label: 'Generating images...', status: 'pending' },
-    { label: 'Creating voiceover...', status: 'pending' },
-    { label: 'Rendering video...', status: 'pending' },
+    { label: 'Creating voiceover & subtitles...', status: 'pending' },
+    { label: 'Finalizing video...', status: 'pending' },
   ]);
   const [isComplete, setIsComplete] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [generatedProjectId, setGeneratedProjectId] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [startTime, setStartTime] = useState<number | null>(null);
 
   const topic = watch('topic');
   const audience = watch('audience');
@@ -43,6 +46,65 @@ export function StepGenerate() {
   const fontFamily = watch('fontFamily');
   const brandKitId = watch('brandKitId');
   const templateId = watch('templateId');
+
+  // Elapsed time counter
+  useEffect(() => {
+    if (!startTime) return;
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startTime]);
+
+  // Progressively advance steps based on elapsed time (realistic estimates)
+  // But always wait for the actual API response to mark completion
+  useEffect(() => {
+    if (!startTime || isComplete || hasError) return;
+
+    // Estimated times for each step (in seconds)
+    const stepDurations = [8, 12, 20, 25, 30]; // cumulative times when each step should start
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    stepDurations.forEach((cumTime, index) => {
+      const timer = setTimeout(() => {
+        setSteps(prev => {
+          const updated = [...prev];
+          // Mark current and all previous steps
+          for (let i = 0; i <= index; i++) {
+            if (i < index) {
+              updated[i] = { ...updated[i], status: 'completed' };
+            } else {
+              updated[i] = { ...updated[i], status: 'active' };
+            }
+          }
+          return updated;
+        });
+      }, cumTime * 1000);
+      timers.push(timer);
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, [startTime, isComplete, hasError]);
+
+  const handleSuccess = useCallback((data: { data?: { project?: { id: string } } }) => {
+    const projectId = data?.data?.project?.id;
+    setGeneratedProjectId(projectId || null);
+    setIsComplete(true);
+    setStartTime(null);
+    // Mark all steps as completed
+    setSteps(prev => prev.map(s => ({ ...s, status: 'completed' as const })));
+  }, []);
+
+  const handleError = useCallback((error: Error) => {
+    setHasError(true);
+    setErrorMessage(error.message || 'Something went wrong');
+    setStartTime(null);
+    setSteps(prev =>
+      prev.map(s =>
+        s.status === 'active' ? { ...s, status: 'error' as const } : s
+      )
+    );
+  }, []);
 
   const generateMutation = useMutation({
     mutationFn: async () => {
@@ -70,60 +132,32 @@ export function StepGenerate() {
       }
       return response.json();
     },
-    onSuccess: (data) => {
-      const projectId = data?.data?.project?.id;
-      setGeneratedProjectId(projectId);
-      setIsComplete(true);
-    },
-    onError: () => {
-      setHasError(true);
-      setSteps((prev) =>
-        prev.map((s) =>
-          s.status === 'active' ? { ...s, status: 'error' } : s
-        )
-      );
-    },
+    onSuccess: handleSuccess,
+    onError: handleError,
   });
-
-  // Simulate step progression during generation
-  useEffect(() => {
-    if (!generateMutation.isPending) return;
-
-    const stepTimers: ReturnType<typeof setTimeout>[] = [];
-    const stepDurations = [3000, 2000, 4000, 3000, 5000];
-
-    stepDurations.forEach((duration, index) => {
-      const timer = setTimeout(() => {
-        setSteps((prev) =>
-          prev.map((s, i) => {
-            if (i === index) return { ...s, status: 'active' };
-            if (i < index) return { ...s, status: 'completed' };
-            return s;
-          })
-        );
-      }, stepDurations.slice(0, index).reduce((a, b) => a + b, 0));
-      stepTimers.push(timer);
-    });
-
-    return () => stepTimers.forEach(clearTimeout);
-  }, [generateMutation.isPending]);
 
   const handleGenerate = () => {
     setHasError(false);
     setIsComplete(false);
+    setErrorMessage('');
+    setElapsed(0);
+    setGeneratedProjectId(null);
     setSteps([
-      { label: 'Generating content...', status: 'pending' },
+      { label: 'Generating content...', status: 'active' },
       { label: 'Creating scenes...', status: 'pending' },
       { label: 'Generating images...', status: 'pending' },
-      { label: 'Creating voiceover...', status: 'pending' },
-      { label: 'Rendering video...', status: 'pending' },
+      { label: 'Creating voiceover & subtitles...', status: 'pending' },
+      { label: 'Finalizing video...', status: 'pending' },
     ]);
+    setStartTime(Date.now());
     generateMutation.mutate();
   };
 
   const handleViewProject = () => {
     if (generatedProjectId) {
       selectProject(generatedProjectId);
+    } else {
+      setView('history');
     }
   };
 
@@ -132,6 +166,12 @@ export function StepGenerate() {
   };
 
   const isGenerating = generateMutation.isPending;
+
+  const formatElapsed = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  };
 
   return (
     <div className="space-y-6">
@@ -223,6 +263,15 @@ export function StepGenerate() {
       {(isGenerating || isComplete || hasError) && (
         <Card className="border-0 shadow-sm">
           <CardContent className="p-6 space-y-4">
+            {/* Elapsed Time */}
+            {isGenerating && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
+                <Clock className="w-4 h-4" />
+                <span>Elapsed: {formatElapsed(elapsed)}</span>
+                <span className="text-xs">(usually takes 30-60s)</span>
+              </div>
+            )}
+
             <AnimatePresence mode="popLayout">
               {steps.map((step, index) => (
                 <motion.div
@@ -271,8 +320,11 @@ export function StepGenerate() {
                 <div className="text-center">
                   <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
                   <h4 className="text-lg font-semibold mb-1">Video Generated!</h4>
-                  <p className="text-sm text-muted-foreground mb-4">
+                  <p className="text-sm text-muted-foreground mb-1">
                     Your video has been successfully generated
+                  </p>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Completed in {formatElapsed(elapsed)}
                   </p>
                   <Button
                     onClick={handleViewProject}
@@ -295,11 +347,16 @@ export function StepGenerate() {
                   <XCircle className="w-12 h-12 text-destructive mx-auto mb-3" />
                   <h4 className="text-lg font-semibold mb-1">Generation Failed</h4>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Something went wrong. Please try again.
+                    {errorMessage || 'Something went wrong. Please try again.'}
                   </p>
-                  <Button onClick={handleRetry} variant="outline">
-                    Retry
-                  </Button>
+                  <div className="flex gap-3 justify-center">
+                    <Button onClick={handleRetry} variant="outline">
+                      Retry
+                    </Button>
+                    <Button onClick={() => setView('history')} variant="ghost">
+                      View History
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
             )}

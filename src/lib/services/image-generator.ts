@@ -82,7 +82,8 @@ export class ImageGenerationService {
   }
 
   /**
-   * Generate images for all scenes that need them
+   * Generate images for key scenes only (to avoid rate limits and speed up pipeline)
+   * Only generates images for the most visually important scenes: hook, solution, and cta
    * @param scenes - Array of scene data
    * @returns Map of scene index to image URL
    */
@@ -92,34 +93,50 @@ export class ImageGenerationService {
   ): Promise<Map<number, string>> {
     const imageMap = new Map<number, string>();
 
-    // Process scenes in parallel (with concurrency limit)
-    const BATCH_SIZE = 3;
+    // Only generate images for key scene types to avoid rate limits
+    const KEY_SCENE_TYPES = ['hook', 'solution', 'cta'];
     const sceneIndices = scenes
       .map((scene, index) => ({ scene, index }))
-      .filter(({ scene }) => scene.imageUrl && scene.imageUrl.trim().length > 0);
-
-    console.log(`[ImageGen] Generating images for ${sceneIndices.length} scenes`);
-
-    for (let i = 0; i < sceneIndices.length; i += BATCH_SIZE) {
-      const batch = sceneIndices.slice(i, i + BATCH_SIZE);
-      const promises = batch.map(async ({ scene, index }) => {
-        try {
-          const imageUrl = await this.generateFromPrompt(
-            scene.imageUrl!,
-            'vertical',
-            projectId
-          );
-          imageMap.set(index, imageUrl);
-        } catch (error) {
-          console.error(`[ImageGen] Failed to generate image for scene ${index}:`, error);
-          imageMap.set(index, `/upload/placeholder-scene.png`);
-        }
+      .filter(({ scene }) => {
+        // Only generate for key scenes that have an image prompt
+        const isKeyScene = KEY_SCENE_TYPES.includes(scene.type);
+        const hasPrompt = scene.imageUrl && scene.imageUrl.trim().length > 0;
+        return isKeyScene && hasPrompt;
       });
 
-      await Promise.all(promises);
+    console.log(`[ImageGen] Generating images for ${sceneIndices.length} key scenes (out of ${scenes.length} total)`);
+
+    // Generate one at a time with delay to avoid rate limits
+    for (let i = 0; i < sceneIndices.length; i++) {
+      const { scene, index } = sceneIndices[i];
+      try {
+        const imageUrl = await this.generateFromPrompt(
+          scene.imageUrl!,
+          'vertical',
+          projectId
+        );
+        imageMap.set(index, imageUrl);
+        // Add 2 second delay between requests to avoid rate limiting
+        if (i < sceneIndices.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      } catch (error) {
+        console.error(`[ImageGen] Failed to generate image for scene ${index}:`, error);
+        // Use placeholder - don't block the pipeline
+        const placeholderUrl = await this.generatePlaceholderImage(scene.imageUrl || 'scene', projectId);
+        imageMap.set(index, placeholderUrl);
+      }
     }
 
-    console.log(`[ImageGen] Generated ${imageMap.size} scene images`);
+    // For non-key scenes, generate placeholders quickly
+    for (let i = 0; i < scenes.length; i++) {
+      if (!imageMap.has(i) && scenes[i].imageUrl && scenes[i].imageUrl.trim().length > 0) {
+        const placeholderUrl = await this.generatePlaceholderImage(scenes[i].imageUrl!, projectId);
+        imageMap.set(i, placeholderUrl);
+      }
+    }
+
+    console.log(`[ImageGen] Generated ${imageMap.size} scene images (3 AI + rest placeholders)`);
     return imageMap;
   }
 
