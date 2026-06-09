@@ -2,43 +2,70 @@
 
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Play, ImageIcon, Film, Clock } from 'lucide-react';
+import { Play, ImageIcon, Film, Clock, Download, RefreshCw } from 'lucide-react';
 import type { Project } from '@/lib/frontend-types';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface VideoPreviewProps {
   project: Project;
+  onReRender?: () => void;
 }
 
-export function VideoPreview({ project }: VideoPreviewProps) {
+export function VideoPreview({ project, onReRender }: VideoPreviewProps) {
   const [showPreview, setShowPreview] = useState(false);
   const [videoAvailable, setVideoAvailable] = useState(false);
+  const [checkingVideo, setCheckingVideo] = useState(false);
 
   const scenes = project.scenes ?? [];
   const imageScenes = scenes.filter(s => s.imageUrl);
 
   // Check if the video file actually exists (HEAD request)
-  useEffect(() => {
+  const checkVideoAvailability = useCallback(() => {
     if (project.videoUrl && project.status === 'completed') {
+      setCheckingVideo(true);
       fetch(project.videoUrl, { method: 'HEAD' })
         .then(res => setVideoAvailable(res.ok))
-        .catch(() => setVideoAvailable(false));
+        .catch(() => setVideoAvailable(false))
+        .finally(() => setCheckingVideo(false));
     }
   }, [project.videoUrl, project.status]);
+
+  useEffect(() => {
+    checkVideoAvailability();
+  }, [checkVideoAvailability]);
 
   // If there's a real playable video file, show the video player
   if (videoAvailable && project.videoUrl) {
     return (
       <Card className="border-0 shadow-sm overflow-hidden">
         <CardContent className="p-0">
-          <video
-            controls
-            className="w-full max-h-[400px] object-contain bg-black"
-            poster={project.thumbnailUrl ?? undefined}
-          >
-            <source src={project.videoUrl} type="video/mp4" />
-            Your browser does not support the video tag.
-          </video>
+          <div className="relative">
+            <video
+              controls
+              className="w-full max-h-[400px] object-contain bg-black"
+              poster={project.thumbnailUrl ?? undefined}
+            >
+              <source src={project.videoUrl} type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
+          </div>
+          {/* Download button */}
+          <div className="p-2 bg-muted/30 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Film className="w-4 h-4 text-accent shrink-0" />
+              <span className="text-xs text-muted-foreground">
+                MP4 video rendered successfully
+              </span>
+            </div>
+            <a
+              href={project.videoUrl}
+              download
+              className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download
+            </a>
+          </div>
         </CardContent>
       </Card>
     );
@@ -143,14 +170,30 @@ export function VideoPreview({ project }: VideoPreviewProps) {
           </div>
         )}
 
-        {/* Completed but no video info */}
+        {/* Completed status - different messages based on video availability */}
         {project.status === 'completed' && (
           <div className="p-3 border-t bg-accent/5">
-            <div className="flex items-center gap-2">
-              <Film className="w-4 h-4 text-accent shrink-0" />
-              <span className="text-xs text-muted-foreground">
-                All content generated (script, scenes, images, voiceover, subtitles, caption, hashtags). MP4 video rendering requires Remotion integration.
-              </span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Film className="w-4 h-4 text-accent shrink-0" />
+                <span className="text-xs text-muted-foreground">
+                  {checkingVideo
+                    ? 'Checking video...'
+                    : videoAvailable
+                      ? 'Video rendered and ready to play'
+                      : 'All content generated. Video is being processed or needs to be re-rendered.'
+                  }
+                </span>
+              </div>
+              {!videoAvailable && !checkingVideo && onReRender && (
+                <button
+                  onClick={onReRender}
+                  className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors shrink-0"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Re-render
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -161,6 +204,16 @@ export function VideoPreview({ project }: VideoPreviewProps) {
             <div className="flex flex-col items-center text-white">
               <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mb-2" />
               <p className="text-sm">Generating...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Rendering overlay */}
+        {project.status === 'rendering' && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+            <div className="flex flex-col items-center text-white">
+              <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2" />
+              <p className="text-sm">Rendering video with Remotion...</p>
             </div>
           </div>
         )}
