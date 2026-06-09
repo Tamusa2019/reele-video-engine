@@ -30,8 +30,25 @@ export class GeminiProvider implements LLMProvider {
       const response = result.response;
       return response.text();
     } catch (error) {
-      console.error('[GeminiProvider] Generation error:', error);
-      throw new Error(`Gemini generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[GeminiProvider] Generation error:', msg);
+
+      // Provide helpful error messages for common issues
+      if (msg.includes('429') || msg.includes('quota')) {
+        throw new Error(
+          'Gemini API quota exceeded. Your free tier limit has been reached. ' +
+          'Wait 24 hours for the daily limit to reset, or enable billing at ' +
+          'https://aistudio.google.com/apikey to get higher limits.'
+        );
+      }
+      if (msg.includes('403') || msg.includes('API key not valid')) {
+        throw new Error(
+          'Gemini API key is invalid. Please check your GEMINI_API_KEY environment variable. ' +
+          'Get a valid key at https://aistudio.google.com/apikey'
+        );
+      }
+
+      throw new Error(`Gemini generation failed: ${msg}`);
     }
   }
 
@@ -70,16 +87,14 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return false;
-      // Try a minimal request to verify the key works
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      await model.generateContent('hi');
-      return true;
-    } catch {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn('[GeminiProvider] GEMINI_API_KEY not set - provider unavailable');
       return false;
     }
+    // Key exists — consider provider available.
+    // Don't make test API calls (wastes quota, adds latency, causes false negatives).
+    console.log('[GeminiProvider] GEMINI_API_KEY found - provider available');
+    return true;
   }
 }
