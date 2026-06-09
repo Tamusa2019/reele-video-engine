@@ -1,6 +1,6 @@
 // =============================================================================
 // Health API - System health check with environment diagnostics
-// GET /api/health - Check system health and env var configuration
+// GET /api/health - Check system health and LLM provider configuration
 // =============================================================================
 
 import { successResponse, serverErrorResponse } from '@/lib/api-utils';
@@ -21,14 +21,23 @@ export async function GET() {
       databaseStatus = 'error';
     }
 
-    // Check environment variables (diagnostic — helps debug deployment issues)
+    // Check LLM provider configuration
+    const llmProviders = {
+      groq: process.env.GROQ_API_KEY
+        ? `configured (${process.env.GROQ_API_KEY.substring(0, 8)}...)`
+        : 'not set — get free key at https://console.groq.com/keys',
+      gemini: process.env.GEMINI_API_KEY
+        ? `configured (${process.env.GEMINI_API_KEY.substring(0, 8)}...)`
+        : 'not set — get free key at https://aistudio.google.com/apikey',
+    };
+
+    const preferred = process.env.LLM_PROVIDER || 'auto (tries groq → gemini)';
+
     const envCheck = {
-      GEMINI_API_KEY: process.env.GEMINI_API_KEY
-        ? `SET (${process.env.GEMINI_API_KEY.substring(0, 8)}...)`
-        : '❌ NOT SET',
-      DATABASE_URL: process.env.DATABASE_URL
-        ? 'SET'
-        : '❌ NOT SET',
+      LLM_PROVIDER: preferred,
+      GROQ_API_KEY: llmProviders.groq,
+      GEMINI_API_KEY: llmProviders.gemini,
+      DATABASE_URL: process.env.DATABASE_URL ? 'SET' : 'NOT SET',
       NODE_ENV: process.env.NODE_ENV || 'not set',
     };
 
@@ -37,7 +46,7 @@ export async function GET() {
       timestamp: new Date().toISOString(),
       database: databaseStatus,
       stats,
-      env: envCheck,
+      llm: envCheck,
       version: '1.0.0',
     });
   } catch (error) {
