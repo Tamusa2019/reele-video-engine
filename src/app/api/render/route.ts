@@ -84,9 +84,19 @@ export async function POST(request: NextRequest) {
     // Queue the render
     const renderResult = await renderService.renderVideo(config);
 
-    // For now, since actual rendering requires Remotion, we'll simulate completion
-    // In production, this would poll/wait for the render job to complete
-    const videoUrl = `/upload/video-${validated.projectId}-${Date.now()}.mp4`;
+    // Wait for the actual Remotion render to complete (up to 5 minutes)
+    console.log(`[Render] Waiting for render job ${renderResult.jobId} to complete...`);
+    const renderCompletion = await renderService.waitForRender(renderResult.jobId, 300000);
+
+    let videoUrl: string;
+    if (renderCompletion.success && renderCompletion.outputUrl) {
+      videoUrl = renderCompletion.outputUrl;
+      console.log(`[Render] Render completed: ${videoUrl} in ${renderCompletion.duration}ms`);
+    } else {
+      // Fall back to placeholder if render fails
+      console.warn(`[Render] Render failed: ${renderCompletion.error}. Using placeholder.`);
+      videoUrl = `/upload/video-${validated.projectId}-${Date.now()}.mp4`;
+    }
 
     // Update project with render result
     await db.project.update({
