@@ -307,8 +307,19 @@ export async function POST(request: NextRequest) {
       config.voiceoverUrl = voiceoverUrl || undefined;
       const renderResult = await renderService.renderVideo(config);
 
-      // Simulated video URL (actual rendering requires Remotion)
-      const videoUrl = `/upload/video-${projectId}-${Date.now()}.mp4`;
+      // Wait for the actual Remotion render to complete (up to 5 minutes)
+      console.log(`[GenerateVideo] Waiting for render job ${renderResult.jobId} to complete...`);
+      const renderCompletion = await renderService.waitForRender(renderResult.jobId, 300000);
+
+      let videoUrl: string;
+      if (renderCompletion.success && renderCompletion.outputUrl) {
+        videoUrl = renderCompletion.outputUrl;
+        console.log(`[GenerateVideo] Render completed: ${videoUrl} in ${renderCompletion.duration}ms`);
+      } else {
+        // Fall back to placeholder if render fails
+        console.warn(`[GenerateVideo] Render failed: ${renderCompletion.error}. Using placeholder.`);
+        videoUrl = `/upload/video-${projectId}-${Date.now()}.mp4`;
+      }
 
       // =========================================================================
       // Step 6: Update project status to "completed"
