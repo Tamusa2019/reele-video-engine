@@ -22,7 +22,7 @@ export class GeminiProvider implements LLMProvider {
     try {
       const genAI = this.getClient();
       const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-1.5-flash',
         systemInstruction: systemPrompt || 'You are a helpful assistant.',
       });
 
