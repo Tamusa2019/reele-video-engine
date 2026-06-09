@@ -1,0 +1,22 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "tamer2017usa@gmail.com"
+          git config --global user.name "TAMER R DOGHEM"
+          git remote add space https://Tamusa2025:$HF_TOKEN@huggingface.co/spaces/Tamusa2025/Reele-engine
+          git push space main
