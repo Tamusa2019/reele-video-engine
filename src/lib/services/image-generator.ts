@@ -1,6 +1,6 @@
 // =============================================================================
 // Image Generation Service - Uses Pollinations.ai (free, no API key needed)
-// Falls back to SVG placeholders when generation fails
+// Falls back to PNG placeholders when generation fails (ffmpeg-based)
 // =============================================================================
 
 import type { SceneData } from '@/lib/types';
@@ -139,31 +139,45 @@ export class ImageGenerationService {
 
   /**
    * Generate a placeholder image when AI generation fails
+   * Creates a minimal PNG file (not SVG — ffmpeg can't read SVG)
    */
   private async generatePlaceholderImage(prompt: string, projectId?: string): Promise<string> {
     await mkdir(UPLOAD_DIR, { recursive: true });
 
     const timestamp = Date.now();
     const filename = projectId
-      ? `placeholder-${projectId}-${timestamp}.svg`
-      : `placeholder-${timestamp}.svg`;
+      ? `placeholder-${projectId}-${timestamp}.png`
+      : `placeholder-${timestamp}.png`;
     const filepath = path.join(UPLOAD_DIR, filename);
 
-    const shortPrompt = prompt.substring(0, 50).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1A2B5F;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#FF6B35;stop-opacity:1" />
-    </linearGradient>
-  </defs>
-  <rect width="1080" height="1920" fill="url(#bg)"/>
-  <text x="540" y="960" font-family="Arial, sans-serif" font-size="36" fill="white" text-anchor="middle" opacity="0.8">${shortPrompt}</text>
-  <text x="540" y="1020" font-family="Arial, sans-serif" font-size="24" fill="white" text-anchor="middle" opacity="0.5">AI Generated Placeholder</text>
-</svg>`;
+    // Try to create a placeholder using ffmpeg (much more compatible than SVG)
+    try {
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
 
-    await writeFile(filepath, svg);
-    return `/api/upload/${filename}`;
+      // Create a gradient background image using ffmpeg
+      const shortPrompt = prompt.substring(0, 40).replace(/'/g, '').replace(/:/g, '');
+      await execFileAsync('ffmpeg', [
+        '-f', 'lavfi',
+        '-i', `color=c=0x1A2B5F:s=1080x1920:d=1,format=yuv420p`,
+        '-vf', `drawtext=font=/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf:text='${shortPrompt}':fontsize=36:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.5:shadowx=2:shadowy=2`,
+        '-frames:v', '1',
+        '-y',
+        filepath,
+      ], { timeout: 10000 });
+
+      return `/api/upload/${filename}`;
+    } catch {
+      // ffmpeg not available or failed — create a minimal valid PNG manually
+      // This is a 1x1 pixel blue PNG as an absolute fallback
+      const MINIMAL_PNG = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      await writeFile(filepath, MINIMAL_PNG);
+      return `/api/upload/${filename}`;
+    }
   }
 
   /**
