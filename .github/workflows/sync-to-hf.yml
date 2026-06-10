@@ -19,22 +19,22 @@ jobs:
           git config --global user.email "tamer2017usa@gmail.com"
           git config --global user.name "TAMER R DOGHEM"
 
-          # Rename Dockerfile.hf → Dockerfile for HF Spaces
+          # Create a clean orphan branch (no history = no large files in past commits)
+          git checkout --orphan hf-clean
+
+          # Add only the files HF needs (excludes skills/, agent-ctx/, download/, db/)
+          git add -A
+          git reset HEAD skills/ agent-ctx/ download/ db/ 2>/dev/null || true
+          git rm -r --cached skills/ agent-ctx/ download/ db/ 2>/dev/null || true
+
+          # Rename Dockerfile.hf → Dockerfile
           if [ -f Dockerfile.hf ]; then
             mv Dockerfile.hf Dockerfile
-            git add -A
-            git commit -m "Use HF Dockerfile" --allow-empty
+            git add Dockerfile
           fi
 
-          # Remove files not needed on HF (large binaries, skills, etc.)
-          git rm -r --cached skills/ agent-ctx/ download/ db/ 2>/dev/null || true
-          echo "skills/" >> .gitignore
-          echo "agent-ctx/" >> .gitignore
-          echo "download/" >> .gitignore
-          echo "db/" >> .gitignore
-          git add .gitignore
-          git commit -m "Exclude large files for HF deployment" --allow-empty
+          # Commit and push to HF
+          git commit -m "Clean deploy for HF Spaces"
 
-          # Force push — GitHub is the source of truth
           git remote add space https://Tamusa2025:$HF_TOKEN@huggingface.co/spaces/Tamusa2025/reele-video-engine
-          git push space main --force
+          git push space hf-clean:main --force
