@@ -21,34 +21,31 @@ jobs:
 
           # Create orphan branch (no history) - files stay in working tree
           git checkout --orphan hf-clean
-          git reset  # unstage everything but keep files on disk
+          git reset
 
-          # Rename files first
-          if [ -f Dockerfile.hf ]; then
-            mv Dockerfile.hf Dockerfile
-          fi
-          if [ -f README_HF.md ]; then
-            mv README_HF.md README.md
-          fi
+          # Rename files for HF
+          [ -f Dockerfile.hf ] && mv Dockerfile.hf Dockerfile
+          [ -f README_HF.md ] && mv README_HF.md README.md
 
-          # Add ONLY source code (no binaries in db/, download/, upload/, skills/)
-          git add \
-            src/ \
-            prisma/ \
-            public/ \
-            package.json \
-            package-lock.json \
-            next.config.ts \
-            tsconfig.json \
-            tailwind.config.ts \
-            postcss.config.mjs \
-            components.json \
-            eslint.config.mjs \
-            .env.example \
-            .dockerignore \
-            entrypoint.sh \
-            Dockerfile \
-            README.md
+          # Add source code - each with || true so missing files don't break it
+          git add src/ || true
+          git add prisma/ || true
+          git add public/ || true
+          git add package.json || true
+          git add package-lock.json || true
+          git add bun.lock || true
+          git add next.config.ts || true
+          git add tsconfig.json || true
+          git add next-env.d.ts || true
+          git add tailwind.config.ts || true
+          git add postcss.config.mjs || true
+          git add components.json || true
+          git add eslint.config.mjs || true
+          git add .env.example || true
+          git add .dockerignore || true
+          git add entrypoint.sh || true
+          git add Dockerfile || true
+          git add README.md || true
 
           git commit -m "Deploy to HF Spaces"
 
