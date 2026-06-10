@@ -2,7 +2,7 @@
 title: Reele Video Engine
 emoji: 🎬
 colorFrom: blue
-colorTo: orange
+colorTo: yellow
 sdk: docker
 pinned: false
 ---
