@@ -4,7 +4,7 @@
 // =============================================================================
 
 import React from 'react';
-import { Composition } from 'remotion';
+import { Composition, Fonts } from 'remotion';
 import { ReeleComposition } from './ReeleComposition';
 import type { ReeleCompositionProps } from './ReeleComposition';
 
@@ -15,42 +15,42 @@ const DEFAULT_PROPS: ReeleCompositionProps = {
       start: 0,
       end: 3,
       type: 'hook',
-      text: 'Did you know this incredible fact?',
+      text: 'The Chemistry of Colors',
       imageUrl: undefined,
     },
     {
       start: 3,
       end: 8,
       type: 'problem',
-      text: 'Most people struggle with this everyday...',
+      text: 'Flamingos are pink because of shrimp',
       imageUrl: undefined,
     },
     {
       start: 8,
       end: 13,
       type: 'solution',
-      text: 'Here is the solution that changes everything!',
+      text: 'Leaves are green by accident',
       imageUrl: undefined,
     },
     {
       start: 13,
       end: 18,
       type: 'proof',
-      text: 'Studies show this works for 95% of people.',
+      text: 'Blue Morphos have no blue pigment',
       imageUrl: undefined,
     },
     {
       start: 18,
       end: 22,
       type: 'cta',
-      text: 'Follow for more tips like this!',
+      text: 'Enjoyed these facts?',
       imageUrl: undefined,
     },
   ],
   branding: {
     primaryColor: '#1A2B5F',
     secondaryColor: '#FFFFFF',
-    accentColor: '#FF6B35',
+    accentColor: '#A855F7',
     fontFamily: 'Inter',
   },
   title: 'Preview Video',
