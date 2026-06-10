@@ -19,12 +19,19 @@ jobs:
           git config --global user.email "tamer2017usa@gmail.com"
           git config --global user.name "TAMER R DOGHEM"
 
-          # Create a completely clean branch with NO history
+          # Create orphan branch (no history) - files stay in working tree
           git checkout --orphan hf-clean
-          git rm -rf . > /dev/null 2>&1 || true
+          git reset  # unstage everything but keep files on disk
 
-          # Add ONLY the source code files HF needs
-          # Explicitly listing directories avoids accidentally including binaries
+          # Rename files first
+          if [ -f Dockerfile.hf ]; then
+            mv Dockerfile.hf Dockerfile
+          fi
+          if [ -f README_HF.md ]; then
+            mv README_HF.md README.md
+          fi
+
+          # Add ONLY source code (no binaries in db/, download/, upload/, skills/)
           git add \
             src/ \
             prisma/ \
@@ -38,23 +45,10 @@ jobs:
             components.json \
             eslint.config.mjs \
             .env.example \
+            .dockerignore \
             entrypoint.sh \
-            README_HF.md \
-            Dockerfile.hf
-
-          # Rename Dockerfile.hf → Dockerfile
-          if [ -f Dockerfile.hf ]; then
-            mv Dockerfile.hf Dockerfile
-            git add Dockerfile
-            git rm --cached Dockerfile.hf 2>/dev/null || true
-          fi
-
-          # Rename README_HF.md → README.md (HF needs this for Space metadata)
-          if [ -f README_HF.md ]; then
-            mv README_HF.md README.md
-            git add README.md
-            git rm --cached README_HF.md 2>/dev/null || true
-          fi
+            Dockerfile \
+            README.md
 
           git commit -m "Deploy to HF Spaces"
 
