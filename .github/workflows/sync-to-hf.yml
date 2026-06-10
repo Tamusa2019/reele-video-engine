@@ -18,5 +18,15 @@ jobs:
         run: |
           git config --global user.email "tamer2017usa@gmail.com"
           git config --global user.name "TAMER R DOGHEM"
-          git remote add space https://Tamusa2025:$HF_TOKEN@huggingface.co/spaces/Tamusa2025/Reele-engine
-          git push space main
+
+          # Rename Dockerfile.hf → Dockerfile for HF Spaces
+          if [ -f Dockerfile.hf ]; then
+            mv Dockerfile.hf Dockerfile
+            git add -A
+            git commit -m "Use HF Dockerfile" --allow-empty
+          fi
+
+          # Force push — GitHub is the source of truth
+          git remote add space https://Tamusa2025:$HF_TOKEN@huggingface.co/spaces/Tamusa2025/reeLe-video-engine
+          git push space main --force
+        
