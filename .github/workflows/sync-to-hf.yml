@@ -19,22 +19,44 @@ jobs:
           git config --global user.email "tamer2017usa@gmail.com"
           git config --global user.name "TAMER R DOGHEM"
 
-          # Create a clean orphan branch (no history = no large files in past commits)
+          # Create a completely clean branch with NO history
           git checkout --orphan hf-clean
+          git rm -rf . > /dev/null 2>&1 || true
 
-          # Add only the files HF needs (excludes skills/, agent-ctx/, download/, db/)
-          git add -A
-          git reset HEAD skills/ agent-ctx/ download/ db/ 2>/dev/null || true
-          git rm -r --cached skills/ agent-ctx/ download/ db/ 2>/dev/null || true
+          # Add ONLY the source code files HF needs
+          # Explicitly listing directories avoids accidentally including binaries
+          git add \
+            src/ \
+            prisma/ \
+            public/ \
+            package.json \
+            package-lock.json \
+            next.config.ts \
+            tsconfig.json \
+            tailwind.config.ts \
+            postcss.config.mjs \
+            components.json \
+            eslint.config.mjs \
+            .env.example \
+            entrypoint.sh \
+            README_HF.md \
+            Dockerfile.hf
 
           # Rename Dockerfile.hf → Dockerfile
           if [ -f Dockerfile.hf ]; then
             mv Dockerfile.hf Dockerfile
             git add Dockerfile
+            git rm --cached Dockerfile.hf 2>/dev/null || true
           fi
 
-          # Commit and push to HF
-          git commit -m "Clean deploy for HF Spaces"
+          # Rename README_HF.md → README.md (HF needs this for Space metadata)
+          if [ -f README_HF.md ]; then
+            mv README_HF.md README.md
+            git add README.md
+            git rm --cached README_HF.md 2>/dev/null || true
+          fi
+
+          git commit -m "Deploy to HF Spaces"
 
           git remote add space https://Tamusa2025:$HF_TOKEN@huggingface.co/spaces/Tamusa2025/reele-video-engine
           git push space hf-clean:main --force
