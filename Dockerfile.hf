@@ -1,8 +1,9 @@
 FROM node:20-slim
 
-# Install Chrome + deps for Remotion
+# Install Chrome + ffmpeg + fonts + deps for Remotion and FFmpeg rendering
 RUN apt-get update && apt-get install -y \
     chromium \
+    ffmpeg \
     fonts-noto-color-emoji \
     fonts-liberation \
     fonts-noto-cjk \
@@ -25,9 +26,19 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Verify ffmpeg is installed
+RUN ffmpeg -version | head -1
+
+# Browser paths for Remotion (also read by video-renderer.ts)
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV CHROME_PATH=/usr/bin/chromium
 ENV REMOTION_CHROME_PATH=/usr/bin/chromium
+
+# Font path for FFmpeg text overlay (video-renderer.ts reads this)
+ENV FONT_PATH=/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf
+
+# Render method: 'auto' (try Remotion, fallback to ffmpeg), 'ffmpeg', or 'remotion'
+ENV RENDER_METHOD=auto
 
 WORKDIR /app
 
