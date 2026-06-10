@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       console.log(`[ReRender] Render completed: ${videoUrl}`);
     } else {
       console.warn(`[ReRender] Render failed: ${renderCompletion.error}`);
-      videoUrl = project.videoUrl || `/upload/video-${projectId}-${Date.now()}.mp4`;
+      videoUrl = project.videoUrl || `/api/upload/video-${projectId}-${Date.now()}.mp4`;
     }
 
     // Update project
