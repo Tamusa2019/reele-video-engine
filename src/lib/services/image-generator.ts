@@ -163,7 +163,7 @@ export class ImageGenerationService {
 </svg>`;
 
     await writeFile(filepath, svg);
-    return `/upload/${filename}`;
+    return `/api/upload/${filename}`;
   }
 
   /**
