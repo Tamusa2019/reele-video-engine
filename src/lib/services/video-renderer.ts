@@ -205,7 +205,7 @@ export class VideoRenderService {
 
       job.status = 'completed';
       job.progress = 100;
-      job.outputUrl = `/upload/video-${jobId}.mp4`;
+      job.outputUrl = `/api/upload/video-${jobId}.mp4`;
 
       // Clean up props file
       try {
