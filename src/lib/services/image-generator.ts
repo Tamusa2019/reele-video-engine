@@ -76,7 +76,7 @@ export class ImageGenerationService {
 
       await writeFile(filepath, buffer);
       console.log(`[ImageGen] Image saved: ${filename} (${buffer.length} bytes)`);
-      return `/upload/${filename}`;
+      return `/api/upload/${filename}`;
     } catch (error) {
       console.warn('[ImageGen] Image generation failed:', error instanceof Error ? error.message : error);
       return this.generatePlaceholderImage(prompt, projectId);
