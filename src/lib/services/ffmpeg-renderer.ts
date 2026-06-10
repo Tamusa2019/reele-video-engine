@@ -217,7 +217,8 @@ export class FfmpegRenderer {
   }
 
   /**
-   * Create a blank gradient background image using ffmpeg
+   * Create a gradient background image matching the HTML design
+   * Navy dark gradient with accent color touches
    */
   private async createBlankImage(
     scene: SceneData,
@@ -226,18 +227,31 @@ export class FfmpegRenderer {
     index: number
   ): Promise<string> {
     const outputPath = path.join(tempDir, `blank-${index}.png`);
-    const { r, g, b } = this.hexToRgb(config.branding.primaryColor);
 
-    // Create a solid color image at target resolution
+    // Create a gradient background matching the HTML navy-dark design
+    // Use a two-tone gradient from dark navy to lighter navy
     const args = [
       '-f', 'lavfi',
-      '-i', `color=c=0x${this.rgbToHex(r, g, b)}:s=${config.width}x${config.height}:d=1`,
+      '-i', `gradients=s=${config.width}x${config.height}:c0=0x0F1A3E:c1=0x1A2B5F:duration=1:direction=diagonal`,
       '-frames:v', '1',
       '-y',
       outputPath,
     ];
 
-    await execFileAsync(this.ffmpegPath, args, { timeout: 10000 });
+    try {
+      await execFileAsync(this.ffmpegPath, args, { timeout: 10000 });
+    } catch {
+      // Fallback to solid color if gradients filter not available
+      const fallbackArgs = [
+        '-f', 'lavfi',
+        '-i', `color=c=0x0F1A3E:s=${config.width}x${config.height}:d=1`,
+        '-frames:v', '1',
+        '-y',
+        outputPath,
+      ];
+      await execFileAsync(this.ffmpegPath, fallbackArgs, { timeout: 10000 });
+    }
+
     return outputPath;
   }
 
@@ -289,8 +303,9 @@ export class FfmpegRenderer {
       '-vf', filterChain,
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
-      '-preset', 'medium',
-      '-crf', '23',
+      '-preset', 'slow',
+      '-crf', '18',
+      '-b:v', '2M',
       '-r', config.fps.toString(),
       '-y',
       outputPath,
@@ -317,8 +332,9 @@ export class FfmpegRenderer {
           '-vf', simpleFilters,
           '-c:v', 'libx264',
           '-pix_fmt', 'yuv420p',
-          '-preset', 'medium',
-          '-crf', '23',
+          '-preset', 'slow',
+          '-crf', '18',
+          '-b:v', '2M',
           '-r', config.fps.toString(),
           '-y',
           outputPath,
@@ -335,15 +351,16 @@ export class FfmpegRenderer {
 
   /**
    * Create ffmpeg drawtext filter for scene text overlay
+   * Matches the HTML design: centered white text with shadow on dark overlay
    */
   private createTextFilter(scene: SceneData, config: RemotionConfig): string | null {
     try {
       // Split text into lines of ~25 characters each for better readability
-      const lines = this.wrapText(scene.text, 28);
+      const lines = this.wrapText(scene.text, 25);
       const escapedLines = lines.map((line) => this.escapeFfmpegText(line));
 
-      // Position text in the center-bottom area of the video
-      const fontSize = scene.type === 'hook' ? 52 : scene.type === 'cta' ? 48 : 42;
+      // Position text in the center of the video (slightly below center)
+      const fontSize = scene.type === 'hook' ? 56 : scene.type === 'cta' ? 48 : 42;
       const lineSpacing = fontSize * 1.4;
       const totalTextHeight = lines.length * lineSpacing;
 
@@ -353,28 +370,21 @@ export class FfmpegRenderer {
       // Build drawtext filters for each line
       const drawtextFilters: string[] = [];
 
+      const fontSpec = this.fontPath.includes('/')
+        ? `fontfile=${this.fontPath}`
+        : `font=${this.fontPath}`;
+
       for (let i = 0; i < escapedLines.length; i++) {
         const y = baseY + i * lineSpacing;
 
-        // Background box for text readability
-        const bgFilter =
-          `drawbox=x=(iw-text_w)/2-20:y=${y - 10}:w=text_w+40:h=${lineSpacing + 10}:color=black@0.6:t=fill`;
-
-        // Text line
-        const fontSpec = this.fontPath.includes('/')
-          ? `fontfile=${this.fontPath}`
-          : `font=${this.fontPath}`;
-
+        // Text line with shadow and background
         const textFilter =
-          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=${config.branding.secondaryColor || 'white'}:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.5:shadowx=2:shadowy=2`;
+          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.7:shadowx=3:shadowy=3:box=1:boxcolor=black@0.4:boxborderw=12`;
 
-        drawtextFilters.push(bgFilter);
         drawtextFilters.push(textFilter);
       }
 
-      // We can't add drawbox in the middle of the filter chain easily,
-      // so just use drawtext with a shadow for simplicity
-      return drawtextFilters.filter((f) => f.startsWith('drawtext')).join(',');
+      return drawtextFilters.join(',');
     } catch (error) {
       console.warn('[FfmpegRenderer] Failed to create text filter:', error);
       return null;
@@ -450,8 +460,9 @@ export class FfmpegRenderer {
         '-i', concatFilePath,
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
-        '-preset', 'medium',
-        '-crf', '23',
+        '-preset', 'slow',
+        '-crf', '18',
+        '-b:v', '2M',
         '-y',
         outputPath,
       ];
