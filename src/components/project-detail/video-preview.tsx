@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Play, ImageIcon, Film, Clock, Download, RefreshCw } from 'lucide-react';
 import type { Project } from '@/lib/frontend-types';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface VideoPreviewProps {
   project: Project;
@@ -15,6 +15,8 @@ export function VideoPreview({ project, onReRender }: VideoPreviewProps) {
   const [showPreview, setShowPreview] = useState(false);
   const [videoAvailable, setVideoAvailable] = useState(false);
   const [checkingVideo, setCheckingVideo] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   const scenes = project.scenes ?? [];
   const imageScenes = scenes.filter(s => s.imageUrl);
@@ -24,15 +26,64 @@ export function VideoPreview({ project, onReRender }: VideoPreviewProps) {
     if (project.videoUrl && project.status === 'completed') {
       setCheckingVideo(true);
       fetch(project.videoUrl, { method: 'HEAD' })
-        .then(res => setVideoAvailable(res.ok))
+        .then(res => {
+          setVideoAvailable(res.ok);
+          if (res.ok) {
+            // Video found — stop polling
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current);
+              pollingRef.current = null;
+            }
+          }
+        })
         .catch(() => setVideoAvailable(false))
         .finally(() => setCheckingVideo(false));
     }
   }, [project.videoUrl, project.status]);
 
+  // Initial check on mount
   useEffect(() => {
     checkVideoAvailability();
   }, [checkVideoAvailability]);
+
+  // FIX: Poll for video availability every 5 seconds when project is rendering/completed but video not available
+  // This handles the case where the video is still being rendered in the background
+  useEffect(() => {
+    // Only poll when: project is rendering OR (completed but video not yet available)
+    const shouldPoll =
+      project.status === 'rendering' ||
+      (project.status === 'completed' && !videoAvailable);
+
+    if (shouldPoll && !pollingRef.current) {
+      pollingRef.current = setInterval(() => {
+        setRetryCount(prev => prev + 1);
+        checkVideoAvailability();
+      }, 5000); // Check every 5 seconds
+    }
+
+    // Stop polling if video is available or project is in a terminal non-completed state
+    if (videoAvailable || (!shouldPoll && pollingRef.current)) {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    }
+
+    // Also refresh project data periodically to catch status changes (rendering -> completed)
+    if (project.status === 'rendering') {
+      pollingRef.current = setInterval(() => {
+        setRetryCount(prev => prev + 1);
+        checkVideoAvailability();
+      }, 5000);
+    }
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [project.status, videoAvailable, checkVideoAvailability]);
 
   // If there's a real playable video file, show the video player
   if (videoAvailable && project.videoUrl) {
@@ -170,7 +221,7 @@ export function VideoPreview({ project, onReRender }: VideoPreviewProps) {
           </div>
         )}
 
-        {/* Completed status - different messages based on video availability */}
+        {/* Completed status - with polling-aware messages */}
         {project.status === 'completed' && (
           <div className="p-3 border-t bg-accent/5">
             <div className="flex items-center justify-between gap-2">
@@ -178,22 +229,32 @@ export function VideoPreview({ project, onReRender }: VideoPreviewProps) {
                 <Film className="w-4 h-4 text-accent shrink-0" />
                 <span className="text-xs text-muted-foreground">
                   {checkingVideo
-                    ? 'Checking video...'
+                    ? 'Checking video availability...'
                     : videoAvailable
                       ? 'Video rendered and ready to play'
-                      : 'All content generated. Video is being processed or needs to be re-rendered.'
+                      : retryCount < 3
+                        ? 'Video is being processed... this may take a few minutes'
+                        : 'All content generated. Video is being processed or needs to be re-rendered.'
                   }
                 </span>
               </div>
-              {!videoAvailable && !checkingVideo && onReRender && (
-                <button
-                  onClick={onReRender}
-                  className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors shrink-0"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Re-render
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {/* Show polling indicator */}
+                {!videoAvailable && (checkingVideo || retryCount > 0) && (
+                  <span className="text-xs text-muted-foreground/60">
+                    {checkingVideo ? '...' : `retry ${retryCount}`}
+                  </span>
+                )}
+                {!videoAvailable && !checkingVideo && retryCount >= 3 && onReRender && (
+                  <button
+                    onClick={onReRender}
+                    className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors shrink-0"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Re-render
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -208,12 +269,13 @@ export function VideoPreview({ project, onReRender }: VideoPreviewProps) {
           </div>
         )}
 
-        {/* Rendering overlay */}
+        {/* Rendering overlay - with auto-polling message */}
         {project.status === 'rendering' && (
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
             <div className="flex flex-col items-center text-white">
               <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2" />
-              <p className="text-sm">Rendering video with Remotion...</p>
+              <p className="text-sm">Rendering video...</p>
+              <p className="text-xs text-white/60 mt-1">This page will auto-update when ready</p>
             </div>
           </div>
         )}
