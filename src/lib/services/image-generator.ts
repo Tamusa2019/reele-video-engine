@@ -84,8 +84,9 @@ export class ImageGenerationService {
   }
 
   /**
-   * Generate images for key scenes only (to avoid rate limits and speed up pipeline)
-   * Only generates images for the most visually important scenes: hook, solution, and cta
+   * Generate images for ALL scenes using Pollinations.ai
+   * Every scene gets a real AI-generated background image
+   * Falls back to gradient placeholder if generation fails
    */
   async generateSceneImages(
     scenes: SceneData[],
@@ -93,48 +94,50 @@ export class ImageGenerationService {
   ): Promise<Map<number, string>> {
     const imageMap = new Map<number, string>();
 
-    const KEY_SCENE_TYPES = ['hook', 'solution', 'cta'];
-    const sceneIndices = scenes
-      .map((scene, index) => ({ scene, index }))
-      .filter(({ scene }) => {
-        const isKeyScene = KEY_SCENE_TYPES.includes(scene.type);
-        const hasPrompt = scene.imageUrl && scene.imageUrl.trim().length > 0;
-        return isKeyScene && hasPrompt;
-      });
+    console.log(`[ImageGen] Generating AI images for ALL ${scenes.length} scenes`);
 
-    console.log(`[ImageGen] Generating images for ${sceneIndices.length} key scenes (out of ${scenes.length} total)`);
+    // Generate one at a time with delay to avoid rate limiting
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      const prompt = scene.imageUrl || this.buildScenePrompt(scene);
 
-    // Generate one at a time with delay to be respectful to the free API
-    for (let i = 0; i < sceneIndices.length; i++) {
-      const { scene, index } = sceneIndices[i];
       try {
         const imageUrl = await this.generateFromPrompt(
-          scene.imageUrl!,
+          prompt,
           'vertical',
           projectId
         );
-        imageMap.set(index, imageUrl);
-        // Add 2 second delay between requests
-        if (i < sceneIndices.length - 1) {
+        imageMap.set(i, imageUrl);
+        console.log(`[ImageGen] Scene ${i + 1}/${scenes.length} (${scene.type}) - AI image generated`);
+
+        // Add delay between requests to respect rate limits
+        if (i < scenes.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       } catch (error) {
-        console.error(`[ImageGen] Failed to generate image for scene ${index}:`, error);
-        const placeholderUrl = await this.generatePlaceholderImage(scene.imageUrl || 'scene', projectId);
-        imageMap.set(index, placeholderUrl);
-      }
-    }
-
-    // For non-key scenes, generate placeholders quickly
-    for (let i = 0; i < scenes.length; i++) {
-      if (!imageMap.has(i) && scenes[i].imageUrl && scenes[i].imageUrl.trim().length > 0) {
-        const placeholderUrl = await this.generatePlaceholderImage(scenes[i].imageUrl!, projectId);
+        console.warn(`[ImageGen] Failed to generate image for scene ${i} (${scene.type}):`, error instanceof Error ? error.message : error);
+        const placeholderUrl = await this.generatePlaceholderImage(prompt, projectId);
         imageMap.set(i, placeholderUrl);
       }
     }
 
-    console.log(`[ImageGen] Generated ${imageMap.size} scene images (3 AI + rest placeholders)`);
+    console.log(`[ImageGen] Generated ${imageMap.size} scene images total`);
     return imageMap;
+  }
+
+  /**
+   * Build a descriptive image prompt from scene data when no imageUrl is provided
+   */
+  private buildScenePrompt(scene: SceneData): string {
+    const typeDescriptions: Record<string, string> = {
+      hook: `Attention-grabbing opening scene for "${scene.text}"`,
+      problem: `Dramatic visualization of the problem: ${scene.text}`,
+      solution: `Inspiring visualization of the solution: ${scene.text}`,
+      proof: `Scientific evidence visualization: ${scene.text}`,
+      cta: `Call-to-action engaging scene: ${scene.text}`,
+      transition: `Smooth transition scene: ${scene.text}`,
+    };
+    return typeDescriptions[scene.type] || `Video scene: ${scene.text}`;
   }
 
   /**
