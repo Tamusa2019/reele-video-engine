@@ -1,10 +1,11 @@
 // =============================================================================
-// Static File Serving for Uploads
-// Serves files from the /home/z/my-project/upload/ directory
+// Upload File Server - Serves generated images, voiceovers, and videos
+// GET /api/upload/:path - Returns a file from the UPLOAD_DIR
 // =============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, stat } from 'fs/promises';
+import { existsSync } from 'fs';
 import path from 'path';
 import { UPLOAD_DIR } from '@/lib/config';
 
@@ -13,52 +14,65 @@ const MIME_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
   '.webp': 'image/webp',
-  '.mp3': 'audio/mpeg',
+  '.svg': 'image/svg+xml',
   '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
   '.srt': 'text/plain',
   '.vtt': 'text/vtt',
-  '.pdf': 'application/pdf',
+  '.json': 'application/json',
 };
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   try {
     const { path: pathSegments } = await params;
-    const filePath = path.join(UPLOAD_DIR, ...pathSegments);
+    const filePath = pathSegments.join('/');
+
+    // Security: prevent directory traversal
+    if (filePath.includes('..')) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
+    }
+
+    const fullPath = path.join(UPLOAD_DIR, filePath);
 
     // Security: ensure the resolved path is within UPLOAD_DIR
-    const resolvedPath = path.resolve(filePath);
-    if (!resolvedPath.startsWith(UPLOAD_DIR)) {
-      return new NextResponse('Forbidden', { status: 403 });
+    const resolvedPath = path.resolve(fullPath);
+    const resolvedUploadDir = path.resolve(UPLOAD_DIR);
+    if (!resolvedPath.startsWith(resolvedUploadDir)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
     }
 
     // Check if file exists
-    const fileStat = await stat(resolvedPath).catch(() => null);
-    if (!fileStat || !fileStat.isFile()) {
-      return new NextResponse('Not Found', { status: 404 });
+    if (!existsSync(resolvedPath)) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
-    // Read file
+    // Read the file
     const fileBuffer = await readFile(resolvedPath);
+    const fileStat = await stat(resolvedPath);
 
-    // Determine content type
+    // Determine MIME type from extension
     const ext = path.extname(resolvedPath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
+    // Return the file with appropriate headers
     return new NextResponse(fileBuffer, {
+      status: 200,
       headers: {
         'Content-Type': contentType,
-        'Content-Length': fileBuffer.length.toString(),
-        'Cache-Control': 'public, max-age=3600',
+        'Content-Length': fileStat.size.toString(),
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Accept-Ranges': 'bytes',
       },
     });
   } catch (error) {
-    console.error('[UploadRoute] Error serving file:', error);
-    return new NextResponse('Internal Server Error', { status: 500 });
+    console.error('[Upload] Error serving file:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
