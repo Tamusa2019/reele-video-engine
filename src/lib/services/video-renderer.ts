@@ -1,6 +1,7 @@
 // =============================================================================
-// Video Render Service - Real Remotion-based video rendering
-// Uses @remotion/bundler + @remotion/renderer to produce actual MP4 files
+// Video Render Service - Dual-engine video rendering
+// Primary: Remotion (browser-based, higher quality)
+// Fallback: FFmpeg (browser-free, reliable in Docker/HF Spaces)
 // =============================================================================
 
 import type { SceneJSON, RemotionConfig, SceneData } from '@/lib/types';
@@ -9,8 +10,13 @@ import { UPLOAD_DIR } from '@/lib/config';
 import { writeFile, mkdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { getFfmpegRenderer } from './ffmpeg-renderer';
 
 let videoRenderInstance: VideoRenderService | null = null;
+
+// Render method: 'auto' tries Remotion first, falls back to ffmpeg
+// 'ffmpeg' forces ffmpeg-only, 'remotion' forces Remotion-only
+const RENDER_METHOD = process.env.RENDER_METHOD || 'auto';
 
 // Render job tracking
 interface RenderJob {
@@ -22,10 +28,53 @@ interface RenderJob {
   startedAt: number;
   config: RemotionConfig;
   projectId?: string;
+  renderMethod?: 'remotion' | 'ffmpeg';
 }
 
 // In-memory job store (for MVP; use DB/BullMQ for production)
 const renderJobs = new Map<string, RenderJob>();
+
+// Also persist completed/failed jobs to UPLOAD_DIR so they survive restarts
+const JOBS_FILE = path.join(UPLOAD_DIR, 'render-jobs.json');
+
+/**
+ * Load persisted jobs from disk (survives process restart)
+ */
+async function loadPersistedJobs(): Promise<void> {
+  try {
+    if (existsSync(JOBS_FILE)) {
+      const data = await readFile(JOBS_FILE, 'utf-8');
+      const jobs: RenderJob[] = JSON.parse(data);
+      for (const job of jobs) {
+        // Only restore completed or failed jobs (active jobs are gone after restart)
+        if (job.status === 'completed' || job.status === 'failed') {
+          renderJobs.set(job.jobId, job);
+        }
+      }
+      console.log(`[VideoRender] Restored ${renderJobs.size} persisted jobs from disk`);
+    }
+  } catch (error) {
+    console.warn('[VideoRender] Could not load persisted jobs:', error);
+  }
+}
+
+/**
+ * Persist current jobs to disk
+ */
+async function persistJobs(): Promise<void> {
+  try {
+    await mkdir(UPLOAD_DIR, { recursive: true });
+    const jobs = Array.from(renderJobs.values()).filter(
+      (j) => j.status === 'completed' || j.status === 'failed'
+    );
+    await writeFile(JOBS_FILE, JSON.stringify(jobs, null, 2));
+  } catch (error) {
+    console.warn('[VideoRender] Could not persist jobs:', error);
+  }
+}
+
+// Load persisted jobs on startup
+loadPersistedJobs().catch(() => {});
 
 export class VideoRenderService {
   /**
@@ -53,19 +102,18 @@ export class VideoRenderService {
   }
 
   /**
-   * Render a video from a Remotion configuration using actual Remotion rendering
+   * Render a video from a Remotion configuration
    * This runs the render in a background-like fashion and returns a job ID
-   * @param config Remotion configuration
-   * @param projectId Optional project ID to update in DB when render completes
    */
   async renderVideo(config: RemotionConfig, projectId?: string): Promise<{ jobId: string; status: string; estimatedTime: number }> {
     console.log(`[VideoRender] Starting render for composition: ${config.compositionId}`);
     console.log(`[VideoRender] Duration: ${config.durationInFrames / config.fps}s, Resolution: ${config.width}x${config.height}`);
+    console.log(`[VideoRender] Render method: ${RENDER_METHOD}`);
 
     // Generate a job ID
     const jobId = `render-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
-    // Estimate rendering time (roughly 2x real-time for Remotion)
+    // Estimate rendering time
     const durationSeconds = config.durationInFrames / config.fps;
     const estimatedTime = Math.ceil(durationSeconds * 3);
 
@@ -87,6 +135,7 @@ export class VideoRenderService {
       if (j) {
         j.status = 'failed';
         j.error = err instanceof Error ? err.message : String(err);
+        persistJobs().catch(() => {});
       }
     });
 
@@ -100,7 +149,7 @@ export class VideoRenderService {
   }
 
   /**
-   * Execute the actual Remotion render
+   * Execute the actual render - tries the configured method with fallback
    */
   private async executeRender(jobId: string, config: RemotionConfig): Promise<void> {
     const job = renderJobs.get(jobId);
@@ -109,178 +158,273 @@ export class VideoRenderService {
     job.status = 'rendering';
     job.progress = 5;
 
-    try {
-      // Dynamic imports to avoid loading Remotion at module level
-      // (Remotion requires browser/webpack which may not be available during SSR)
-      const { bundle } = await import('@remotion/bundler');
-      const { renderMedia, selectComposition } = await import('@remotion/renderer');
-
-      // Step 1: Create a temporary composition props file
-      await mkdir(UPLOAD_DIR, { recursive: true });
-      const propsDir = path.join(UPLOAD_DIR, 'render-props');
-      await mkdir(propsDir, { recursive: true });
-
-      const propsFilePath = path.join(propsDir, `${jobId}-props.json`);
-      const compositionProps = {
-        scenes: config.scenes,
-        branding: config.branding,
-        voiceoverUrl: config.voiceoverUrl || undefined,
-        subtitleUrl: config.subtitleUrl || undefined,
-        title: config.compositionId,
-      };
-
-      await writeFile(propsFilePath, JSON.stringify(compositionProps, null, 2));
-      console.log(`[VideoRender] Props file written: ${propsFilePath}`);
-
-      job.progress = 10;
-
-      // Step 2: Bundle the Remotion project
-      console.log('[VideoRender] Bundling Remotion project...');
-      const entryPoint = path.join(process.cwd(), 'src', 'remotion', 'index.ts');
-
-      // Check if entry point exists
-      if (!existsSync(entryPoint)) {
-        throw new Error(`Remotion entry point not found: ${entryPoint}`);
-      }
-
-      const bundleLocation = await bundle({
-        entryPoint,
-        // Use webpack for bundling (Remotion's default)
-        webpackOverride: (override) => override,
-        onProgress: (progress) => {
-          // Bundle progress (0 to 1)
-          job.progress = 10 + Math.floor(progress * 30);
-        },
-      });
-
-      console.log(`[VideoRender] Bundle created at: ${bundleLocation}`);
-      job.progress = 40;
-
-      // Step 3: Select the composition
-      console.log('[VideoRender] Selecting composition...');
-      const composition = await selectComposition({
-        serveUrl: bundleLocation,
-        id: 'ReeleVideo',
-        inputProps: compositionProps,
-      });
-
-      // Override composition settings from our config
-      composition.durationInFrames = config.durationInFrames;
-      composition.fps = config.fps;
-      composition.width = config.width;
-      composition.height = config.height;
-
-      console.log(`[VideoRender] Composition: ${composition.id}, ${composition.durationInFrames} frames @ ${composition.fps}fps`);
-      job.progress = 45;
-
-      // Step 4: Render the video
-      const outputPath = path.join(UPLOAD_DIR, `video-${jobId}.mp4`);
-      console.log(`[VideoRender] Rendering to: ${outputPath}`);
-
-      await renderMedia({
-        composition,
-        serveUrl: bundleLocation,
-        codec: 'h264',
-        outputLocation: outputPath,
-        inputProps: compositionProps,
-        onProgress: ({ progress }) => {
-          // Render progress (0 to 1)
-          job.progress = 45 + Math.floor(progress * 50);
-          if (Math.floor(progress * 10) !== Math.floor((progress - 0.01) * 10)) {
-            console.log(`[VideoRender] Progress: ${Math.round(progress * 100)}%`);
-          }
-        },
-        // Optimizations for server rendering
-        concurrency: 1,
-        scale: 1,
-        verbose: false,
-        // H264 encoding settings for social media
-        encode: true,
-        enforceAudioTrack: true,
-      });
-
-      // Step 5: Verify output
-      if (!existsSync(outputPath)) {
-        throw new Error(`Render completed but output file not found: ${outputPath}`);
-      }
-
-      const stats = await import('fs/promises').then(m => m.stat(outputPath));
-      console.log(`[VideoRender] Render complete! Output: ${outputPath} (${Math.round(stats.size / 1024 / 1024)}MB)`);
-
-      job.status = 'completed';
-      job.progress = 100;
-      job.outputUrl = `/api/upload/video-${jobId}.mp4`;
-
-      // Update the project in the database if projectId was provided
-      if (job.projectId) {
-        try {
-          const { db } = await import('@/lib/db');
-          await db.project.update({
-            where: { id: job.projectId },
-            data: {
-              status: 'completed',
-              videoUrl: job.outputUrl,
-            },
-          });
-
-          // Create video asset record
-          await db.asset.create({
-            data: {
-              projectId: job.projectId,
-              type: 'image',
-              url: job.outputUrl,
-              fileName: job.outputUrl.split('/').pop(),
-              mimeType: 'video/mp4',
-              metadata: JSON.stringify({
-                jobId,
-                duration: config.durationInFrames / config.fps,
-                resolution: `${config.width}x${config.height}`,
-                fps: config.fps,
-              }),
-            },
-          });
-
-          console.log(`[VideoRender] Project ${job.projectId} updated with video: ${job.outputUrl}`);
-        } catch (dbError) {
-          console.error(`[VideoRender] Failed to update project ${job.projectId} in DB:`, dbError);
-          // Don't fail the render - the video file exists, just the DB update failed
-        }
-      }
-
-      // Clean up props file
+    // Determine render method
+    if (RENDER_METHOD === 'ffmpeg') {
+      // Force ffmpeg only
+      await this.executeFfmpegRender(jobId, config);
+    } else if (RENDER_METHOD === 'remotion') {
+      // Force Remotion only
+      await this.executeRemotionRender(jobId, config);
+    } else {
+      // Auto: try Remotion first, fall back to ffmpeg
       try {
-        const { unlink } = await import('fs/promises');
-        await unlink(propsFilePath);
-      } catch {
-        // Ignore cleanup errors
-      }
-
-    } catch (error) {
-      console.error(`[VideoRender] Render failed for job ${jobId}:`, error);
-      job.status = 'failed';
-      job.error = error instanceof Error ? error.message : String(error);
-      job.progress = Math.max(job.progress, 0);
-
-      // Update the project in the database to reflect failure
-      if (job.projectId) {
-        try {
-          const { db } = await import('@/lib/db');
-          await db.project.update({
-            where: { id: job.projectId },
-            data: {
-              status: 'failed',
-              errorMessage: job.error,
-            },
-          });
-        } catch (dbError) {
-          console.error(`[VideoRender] Failed to update project ${job.projectId} failure in DB:`, dbError);
+        await this.executeRemotionRender(jobId, config);
+      } catch (remotionError) {
+        console.warn(`[VideoRender] Remotion render failed, trying ffmpeg fallback:`, remotionError);
+        const j = renderJobs.get(jobId);
+        if (j && j.status !== 'completed') {
+          // Reset job for ffmpeg attempt
+          j.status = 'rendering';
+          j.progress = 5;
+          j.error = undefined;
+          try {
+            await this.executeFfmpegRender(jobId, config);
+          } catch (ffmpegError) {
+            console.error(`[VideoRender] FFmpeg fallback also failed:`, ffmpegError);
+            throw new Error(
+              `Both renderers failed. Remotion: ${remotionError instanceof Error ? remotionError.message : String(remotionError)}. FFmpeg: ${ffmpegError instanceof Error ? ffmpegError.message : String(ffmpegError)}`
+            );
+          }
         }
       }
     }
   }
 
   /**
+   * Execute Remotion-based render (with proper browser configuration)
+   */
+  private async executeRemotionRender(jobId: string, config: RemotionConfig): Promise<void> {
+    const job = renderJobs.get(jobId);
+    if (!job) return;
+
+    job.renderMethod = 'remotion';
+
+    // Dynamic imports to avoid loading Remotion at module level
+    const { bundle } = await import('@remotion/bundler');
+    const { renderMedia, selectComposition } = await import('@remotion/renderer');
+
+    // Step 1: Create a temporary composition props file
+    await mkdir(UPLOAD_DIR, { recursive: true });
+    const propsDir = path.join(UPLOAD_DIR, 'render-props');
+    await mkdir(propsDir, { recursive: true });
+
+    const propsFilePath = path.join(propsDir, `${jobId}-props.json`);
+    const compositionProps = {
+      scenes: config.scenes,
+      branding: config.branding,
+      voiceoverUrl: config.voiceoverUrl || undefined,
+      subtitleUrl: config.subtitleUrl || undefined,
+      title: config.compositionId,
+    };
+
+    await writeFile(propsFilePath, JSON.stringify(compositionProps, null, 2));
+    console.log(`[VideoRender] Props file written: ${propsFilePath}`);
+
+    job.progress = 10;
+
+    // Step 2: Bundle the Remotion project
+    console.log('[VideoRender] Bundling Remotion project...');
+    const entryPoint = path.join(process.cwd(), 'src', 'remotion', 'index.ts');
+
+    if (!existsSync(entryPoint)) {
+      throw new Error(`Remotion entry point not found: ${entryPoint}`);
+    }
+
+    const bundleLocation = await bundle({
+      entryPoint,
+      webpackOverride: (override: any) => override,
+      onProgress: (progress: number) => {
+        job.progress = 10 + Math.floor(progress * 30);
+      },
+    });
+
+    console.log(`[VideoRender] Bundle created at: ${bundleLocation}`);
+    job.progress = 40;
+
+    // ===== CRITICAL FIX: Browser executable + chromium options =====
+    // Detect browser executable from environment
+    const browserExecutable =
+      process.env.REMOTION_CHROME_PATH ||
+      process.env.PUPPETEER_EXECUTABLE_PATH ||
+      process.env.CHROME_PATH ||
+      undefined;
+
+    // Chromium options for Docker environments
+    // Note: Remotion v4 ChromiumOptions doesn't have 'args' —
+    // --no-sandbox is handled automatically in headless-shell mode
+    const chromiumOptions = {
+      ignoreCertificateErrors: true,
+      disableWebSecurity: true,
+      enableMultiProcessOnLinux: true,
+    };
+
+    // Use headless-shell mode (designed for Docker/server environments)
+    const chromeMode = 'headless-shell' as const;
+
+    if (browserExecutable) {
+      console.log(`[VideoRender] Using browser: ${browserExecutable}`);
+    }
+
+    // Step 3: Select the composition (with browser executable!)
+    console.log('[VideoRender] Selecting composition...');
+    const composition = await selectComposition({
+      serveUrl: bundleLocation,
+      id: 'ReeleVideo',
+      inputProps: compositionProps,
+      ...(browserExecutable ? { browserExecutable } : {}),
+      chromiumOptions,
+      chromeMode,
+    });
+
+    // Override composition settings from our config
+    composition.durationInFrames = config.durationInFrames;
+    composition.fps = config.fps;
+    composition.width = config.width;
+    composition.height = config.height;
+
+    console.log(`[VideoRender] Composition: ${composition.id}, ${composition.durationInFrames} frames @ ${composition.fps}fps`);
+    job.progress = 45;
+
+    // Step 4: Render the video (with browser executable!)
+    const outputPath = path.join(UPLOAD_DIR, `video-${jobId}.mp4`);
+    console.log(`[VideoRender] Rendering to: ${outputPath}`);
+
+    await renderMedia({
+      composition,
+      serveUrl: bundleLocation,
+      codec: 'h264',
+      outputLocation: outputPath,
+      inputProps: compositionProps,
+      onProgress: ({ progress }: { progress: number }) => {
+        job.progress = 45 + Math.floor(progress * 50);
+        if (Math.floor(progress * 10) !== Math.floor((progress - 0.01) * 10)) {
+          console.log(`[VideoRender] Progress: ${Math.round(progress * 100)}%`);
+        }
+      },
+      concurrency: 1,
+      scale: 1,
+      verbose: false,
+      encode: true,
+      enforceAudioTrack: true,
+      // ===== CRITICAL FIX: Pass browser executable + chromium options + chromeMode =====
+      ...(browserExecutable ? { browserExecutable } : {}),
+      chromiumOptions,
+      chromeMode,
+    });
+
+    // Step 5: Verify output
+    if (!existsSync(outputPath)) {
+      throw new Error(`Render completed but output file not found: ${outputPath}`);
+    }
+
+    const stats = await import('fs/promises').then((m) => m.stat(outputPath));
+    console.log(`[VideoRender] Remotion render complete! Output: ${outputPath} (${Math.round(stats.size / 1024 / 1024)}MB)`);
+
+    // Mark as completed
+    job.status = 'completed';
+    job.progress = 100;
+    job.outputUrl = `/api/upload/video-${jobId}.mp4`;
+
+    await this.onRenderComplete(job, config);
+  }
+
+  /**
+   * Execute FFmpeg-based render (browser-free, reliable in Docker)
+   */
+  private async executeFfmpegRender(jobId: string, config: RemotionConfig): Promise<void> {
+    const job = renderJobs.get(jobId);
+    if (!job) return;
+
+    job.renderMethod = 'ffmpeg';
+
+    const ffmpegRenderer = getFfmpegRenderer();
+    const isAvailable = await ffmpegRenderer.isAvailable();
+
+    if (!isAvailable) {
+      throw new Error('FFmpeg is not available on this system. Install ffmpeg or use Remotion rendering.');
+    }
+
+    console.log('[VideoRender] Using FFmpeg renderer (no browser needed)');
+
+    const outputPath = await ffmpegRenderer.renderVideo(config, jobId, (progress: number) => {
+      job.progress = progress;
+    });
+
+    // Verify output
+    if (!existsSync(outputPath)) {
+      throw new Error(`FFmpeg render completed but output file not found: ${outputPath}`);
+    }
+
+    const stats = await import('fs/promises').then((m) => m.stat(outputPath));
+    console.log(`[VideoRender] FFmpeg render complete! Output: ${outputPath} (${Math.round(stats.size / 1024 / 1024)}MB)`);
+
+    // Mark as completed
+    job.status = 'completed';
+    job.progress = 100;
+    job.outputUrl = `/api/upload/video-${jobId}.mp4`;
+
+    await this.onRenderComplete(job, config);
+  }
+
+  /**
+   * Called when a render completes successfully (shared by both renderers)
+   */
+  private async onRenderComplete(job: RenderJob, config: RemotionConfig): Promise<void> {
+    // Persist the completed job
+    await persistJobs();
+
+    // Update the project in the database if projectId was provided
+    if (job.projectId) {
+      try {
+        const { db } = await import('@/lib/db');
+        await db.project.update({
+          where: { id: job.projectId },
+          data: {
+            status: 'completed',
+            videoUrl: job.outputUrl,
+          },
+        });
+
+        // Create video asset record (FIX: type should be 'video', not 'image')
+        await db.asset.create({
+          data: {
+            projectId: job.projectId,
+            type: 'video',
+            url: job.outputUrl,
+            fileName: job.outputUrl!.split('/').pop(),
+            mimeType: 'video/mp4',
+            metadata: JSON.stringify({
+              jobId: job.jobId,
+              renderMethod: job.renderMethod || 'unknown',
+              duration: config.durationInFrames / config.fps,
+              resolution: `${config.width}x${config.height}`,
+              fps: config.fps,
+            }),
+          },
+        });
+
+        console.log(`[VideoRender] Project ${job.projectId} updated with video: ${job.outputUrl}`);
+      } catch (dbError) {
+        console.error(`[VideoRender] Failed to update project ${job.projectId} in DB:`, dbError);
+        // Don't fail the render - the video file exists, just the DB update failed
+      }
+    }
+
+    // Clean up props file if it exists
+    try {
+      const propsFilePath = path.join(UPLOAD_DIR, 'render-props', `${job.jobId}-props.json`);
+      if (existsSync(propsFilePath)) {
+        const { unlink } = await import('fs/promises');
+        await unlink(propsFilePath);
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+
+  /**
    * Get the render status for a job
+   * Also checks if the video file actually exists for completed jobs
    */
   async getRenderStatus(jobId: string): Promise<{
     jobId: string;
@@ -292,12 +436,36 @@ export class VideoRenderService {
     const job = renderJobs.get(jobId);
 
     if (!job) {
+      // Check if the video file exists even though we don't have the job
+      // This handles the case where the process restarted
+      const possiblePath = path.join(UPLOAD_DIR, `video-${jobId}.mp4`);
+      if (existsSync(possiblePath)) {
+        return {
+          jobId,
+          status: 'completed',
+          progress: 100,
+          outputUrl: `/api/upload/video-${jobId}.mp4`,
+        };
+      }
+
       return {
         jobId,
         status: 'failed',
         progress: 0,
-        error: `Job ${jobId} not found`,
+        error: `Job ${jobId} not found. The render job may have been lost due to a server restart. Please try re-rendering.`,
       };
+    }
+
+    // For completed jobs, verify the file still exists
+    if (job.status === 'completed' && job.outputUrl) {
+      const filename = job.outputUrl.replace('/api/upload/', '');
+      const filePath = path.join(UPLOAD_DIR, filename);
+      if (!existsSync(filePath)) {
+        // File was deleted or lost
+        job.status = 'failed';
+        job.error = 'Video file was lost. Please re-render.';
+        await persistJobs();
+      }
     }
 
     return {
@@ -311,7 +479,6 @@ export class VideoRenderService {
 
   /**
    * Wait for a render job to complete (polling)
-   * Used by the API when we want synchronous render completion
    */
   async waitForRender(jobId: string, timeoutMs: number = 300000): Promise<{
     success: boolean;
@@ -320,7 +487,7 @@ export class VideoRenderService {
     duration: number;
   }> {
     const startTime = Date.now();
-    const pollInterval = 2000; // 2 seconds
+    const pollInterval = 2000;
 
     while (Date.now() - startTime < timeoutMs) {
       const status = await this.getRenderStatus(jobId);
@@ -341,8 +508,7 @@ export class VideoRenderService {
         };
       }
 
-      // Wait before polling again
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
     return {
@@ -391,7 +557,6 @@ export class VideoRenderService {
       errors.push('At least one scene is required');
     }
 
-    // Check scene timing continuity
     if (config.scenes.length > 0) {
       let lastEnd = 0;
       for (let i = 0; i < config.scenes.length; i++) {
@@ -414,14 +579,9 @@ export class VideoRenderService {
 
   /**
    * Generate a Remotion composition component code from config
-   * This creates the React component that Remotion will render
    */
   generateCompositionCode(config: RemotionConfig): string {
     const sceneComponents = config.scenes.map((scene, index) => {
-      const animationType = scene.animation?.type || 'fadeIn';
-      const animationDuration = scene.animation?.duration || 0.5;
-      const easing = scene.animation?.easing || 'easeInOut';
-
       return `
       {/* Scene ${index + 1}: ${scene.type} */}
       <AbsoluteFill
@@ -445,7 +605,6 @@ export class VideoRenderService {
         }}>
           ${scene.text}
         </div>
-        ${config.branding.logoUrl ? `<Img src="${config.branding.logoUrl}" style={{ position: 'absolute', ${config.branding.watermarkPosition === 'top-right' ? 'top: 20, right: 20' : 'bottom: 20, right: 20'}, width: 80, height: 80, opacity: 0.8 }} />` : ''}
       </AbsoluteFill>`;
     }).join('\n');
 
