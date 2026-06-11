@@ -2,7 +2,7 @@
 title: Reele Video Engine v2
 emoji: 🎬
 colorFrom: purple
-colorTo: cyan
+colorTo: yellow
 sdk: docker
 app_port: 7860
 pinned: false
