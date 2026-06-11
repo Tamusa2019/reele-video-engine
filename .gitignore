@@ -1,55 +1,54 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
 
-# dependencies
-node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# Generated media
+output/
+download/
+upload/
+*.mp4
+*.mp3
+*.wav
+*.png
+*.jpg
 
-# testing
-/coverage
+# Cache
+/tmp/
+reele_cache/
 
-# next.js
-/.next/
-/out/
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 
-# production
-/build
-
-# misc
+# OS
 .DS_Store
-*.pem
+Thumbs.db
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
+# Environment
+.env
+.env.local
 
-# env files (can opt-in for committing if needed)
-.env*
-!.env.example
+# Node (old project)
+node_modules/
+.next/
+bun.lock
 
-# vercel
-.vercel
-
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-local-*
-.claude
-.z-ai-config
-*.log
-dev.log
-dev.out.log
-test
-prompt
-
-server.log
-# Skills directory
-/skills/
+# Old project files (keeping for reference)
+# src/
+# prisma/
+# db/
+# mini-services/
+# examples/
+# .github/
+# .zscripts/
+# agent-ctx/

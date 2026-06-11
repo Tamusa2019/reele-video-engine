@@ -1,64 +1,39 @@
-# =============================================================================
-# Dockerfile for Reele Video Engine
-# Works with Render Docker deployments, fly.io, Railway, etc.
-# =============================================================================
+FROM python:3.11-slim
 
-FROM node:20-slim AS base
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    fonts-noto \
+    fonts-noto-cjk \
+    fonts-freefont-ttf \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies only when needed
-FROM base AS deps
+# Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package.json bun.lock* package-lock.json* ./
-COPY prisma ./prisma/
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install dependencies (use npm since bun may not be available)
-RUN npm install --frozen-lockfile 2>/dev/null || npm install
-
-# Rebuild the source code only when needed
-FROM base AS builder
-WORKDIR /app
-
-COPY --from=deps /app/node_modules ./node_modules
+# Copy application code
 COPY . .
 
-# Generate Prisma client
-RUN npx prisma generate
+# Create output and cache directories
+RUN mkdir -p /tmp/reele_output /tmp/reele_cache/images /tmp/reele_cache/tts /tmp/reele_cache/music
 
-# Build Next.js
-RUN npm run build
+# Environment variables
+ENV OUTPUT_DIR=/tmp/reele_output
+ENV CACHE_DIR=/tmp/reele_cache
+ENV PORT=7860
 
-# Production image
-FROM base AS runner
-WORKDIR /app
+# Expose port
+EXPOSE 7860
 
-ENV NODE_ENV=production
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:7860/api/health || exit 1
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
-
-# Create directories for uploads and database
-RUN mkdir -p /app/upload /app/db && \
-    chown nextjs:nodejs /app/upload /app/db
-
-# Copy built application
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-
-# Set environment variables
-ENV DATABASE_URL=file:./db/custom.db
-ENV UPLOAD_DIR=/app/upload
-
-USER nextjs
-
-EXPOSE 3000
-
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["node", "server.js"]
+# Run the application
+CMD ["python", "app.py"]

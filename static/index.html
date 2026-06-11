@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reele Video Engine v2</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="logo">
+        <div class="logo-icon">🎬</div>
+        <span class="logo-text">Reele</span>
+        <span class="logo-badge">v2</span>
+    </div>
+    <div class="status-indicator">
+        <span class="status-dot ready"></span>
+        <span id="engineStatus">Engine Ready</span>
+    </div>
+</header>
+
+<!-- Main Content -->
+<main class="main-container">
+
+    <!-- Left Column: Input & Config -->
+    <div class="left-column">
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📝</span>
+                Video Script
+            </div>
+
+            <div class="form-group">
+                <label>Topic / Prompt</label>
+                <input type="text" id="topicInput" placeholder="e.g., 5 mind-blowing facts about space..." value="amazing facts about the human brain">
+            </div>
+
+            <div class="form-group">
+                <label>Style</label>
+                <select id="styleSelect">
+                    <option value="energetic">⚡ Energetic & Fast</option>
+                    <option value="calm">🧘 Calm & Informative</option>
+                    <option value="dramatic">🎭 Dramatic & Intense</option>
+                    <option value="lofi">🎵 Lo-fi & Chill</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Number of Scenes</label>
+                <select id="sceneCount">
+                    <option value="4">4 scenes (quick)</option>
+                    <option value="5" selected>5 scenes (standard)</option>
+                    <option value="6">6 scenes (detailed)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top: 16px;">
+            <div class="card-title">
+                <span class="icon">🎙️</span>
+                Voice & Audio
+            </div>
+
+            <div class="form-group">
+                <label>Narrator Voice</label>
+                <div class="voice-grid" id="voiceGrid">
+                    <div class="voice-option selected" data-voice="bella">
+                        <span class="voice-name">Bella</span>
+                        <span class="voice-desc">Warm & clear</span>
+                    </div>
+                    <div class="voice-option" data-voice="adam">
+                        <span class="voice-name">Adam</span>
+                        <span class="voice-desc">Deep & strong</span>
+                    </div>
+                    <div class="voice-option" data-voice="dolly">
+                        <span class="voice-name">Dolly</span>
+                        <span class="voice-desc">Friendly</span>
+                    </div>
+                    <div class="voice-option" data-voice="george">
+                        <span class="voice-name">George</span>
+                        <span class="voice-desc">British</span>
+                    </div>
+                    <div class="voice-option" data-voice="nova">
+                        <span class="voice-name">Nova</span>
+                        <span class="voice-desc">Modern</span>
+                    </div>
+                    <div class="voice-option" data-voice="echo">
+                        <span class="voice-name">Echo</span>
+                        <span class="voice-desc">Confident</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="toggle-group">
+                <span>Background Music</span>
+                <div class="toggle active" id="musicToggle" onclick="toggleMusic()"></div>
+            </div>
+        </div>
+
+        <!-- Generate Button -->
+        <button class="btn-generate" id="generateBtn" onclick="generateVideo()">
+            <span class="btn-text">🎬 Generate Video</span>
+        </button>
+
+        <!-- Progress -->
+        <div class="progress-section" id="progressSection" style="display: none;">
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div class="progress-text" id="progressText">Starting...</div>
+        </div>
+    </div>
+
+    <!-- Right Column: Preview & Scenes -->
+    <div class="right-column">
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📱</span>
+                Video Preview
+            </div>
+
+            <div class="video-preview" id="videoPreview">
+                <div class="video-placeholder" id="videoPlaceholder">
+                    <span class="placeholder-icon">🎬</span>
+                    <p>Generate a video to preview</p>
+                </div>
+                <video id="videoPlayer" style="display: none;" controls loop></video>
+            </div>
+
+            <div class="download-section" id="downloadSection" style="display: none;">
+                <button class="btn-download" id="downloadBtn" onclick="downloadVideo()">
+                    ⬇️ Download Video
+                </button>
+            </div>
+        </div>
+
+        <!-- Scene List -->
+        <div class="card" style="margin-top: 16px;">
+            <div class="card-title">
+                <span class="icon">📋</span>
+                Scene Breakdown
+            </div>
+            <div class="scene-list" id="sceneList">
+                <div class="video-placeholder" style="padding: 40px;">
+                    <p style="color: var(--text-secondary);">Scenes will appear here after generation</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</main>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────
+
+let selectedVoice = 'bella';
+let addMusic = true;
+let isGenerating = false;
+let currentVideoUrl = null;
+
+// ─── Voice Selection ──────────────────────────────────────────────
+
+document.querySelectorAll('.voice-option').forEach(el => {
+    el.addEventListener('click', () => {
+        document.querySelectorAll('.voice-option').forEach(v => v.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedVoice = el.dataset.voice;
+    });
+});
+
+function toggleMusic() {
+    const toggle = document.getElementById('musicToggle');
+    addMusic = !addMusic;
+    toggle.classList.toggle('active', addMusic);
+}
+
+// ─── Video Generation ─────────────────────────────────────────────
+
+async function generateVideo() {
+    if (isGenerating) return;
+    isGenerating = true;
+
+    const topic = document.getElementById('topicInput').value.trim();
+    if (!topic) {
+        alert('Please enter a topic');
+        isGenerating = false;
+        return;
+    }
+
+    const style = document.getElementById('styleSelect').value;
+    const numScenes = parseInt(document.getElementById('sceneCount').value);
+
+    // Update UI state
+    const btn = document.getElementById('generateBtn');
+    btn.disabled = true;
+    btn.querySelector('.btn-text').textContent = '⏳ Generating...';
+
+    const progressSection = document.getElementById('progressSection');
+    progressSection.style.display = 'block';
+    updateProgress(5, 'Sending request...');
+
+    // Update status indicator
+    const statusDot = document.querySelector('.status-dot');
+    statusDot.className = 'status-dot processing';
+    document.getElementById('engineStatus').textContent = 'Processing...';
+
+    // Hide previous video
+    document.getElementById('videoPlayer').style.display = 'none';
+    document.getElementById('videoPlaceholder').style.display = 'flex';
+    document.getElementById('downloadSection').style.display = 'none';
+
+    try {
+        // Start progress animation
+        let progressVal = 5;
+        const progressInterval = setInterval(() => {
+            if (progressVal < 90) {
+                progressVal += Math.random() * 3;
+                updateProgress(Math.min(progressVal, 90), 'Processing...');
+            }
+        }, 1000);
+
+        const response = await fetch(
+            `/api/generate?topic=${encodeURIComponent(topic)}&style=${style}&voice=${selectedVoice}&num_scenes=${numScenes}&add_music=${addMusic}`
+        );
+
+        clearInterval(progressInterval);
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Generation failed');
+        }
+
+        const data = await response.json();
+
+        updateProgress(100, 'Complete!');
+
+        // Show scenes
+        displayScenes(data.scenes);
+
+        // Show video
+        if (data.video_url) {
+            currentVideoUrl = data.video_url;
+            const player = document.getElementById('videoPlayer');
+            player.src = data.video_url;
+            player.style.display = 'block';
+            document.getElementById('videoPlaceholder').style.display = 'none';
+            document.getElementById('downloadSection').style.display = 'block';
+            player.play().catch(() => {});
+        }
+
+        // Update status
+        statusDot.className = 'status-dot ready';
+        document.getElementById('engineStatus').textContent = 'Video Ready';
+
+    } catch (error) {
+        console.error('Generation error:', error);
+        updateProgress(0, `Error: ${error.message}`);
+
+        const statusDot = document.querySelector('.status-dot');
+        statusDot.className = 'status-dot error';
+        document.getElementById('engineStatus').textContent = 'Error';
+        alert('Video generation failed: ' + error.message);
+
+    } finally {
+        isGenerating = false;
+        btn.disabled = false;
+        btn.querySelector('.btn-text').textContent = '🎬 Generate Video';
+    }
+}
+
+function updateProgress(percent, text) {
+    const bar = document.getElementById('progressBar');
+    const label = document.getElementById('progressText');
+    bar.style.width = percent + '%';
+    label.textContent = text;
+}
+
+function displayScenes(scenes) {
+    const container = document.getElementById('sceneList');
+    container.innerHTML = '';
+
+    scenes.forEach((scene, idx) => {
+        const item = document.createElement('div');
+        item.className = 'scene-item fade-in';
+        item.style.animationDelay = `${idx * 0.1}s`;
+
+        const typeColors = {
+            hook: '#e17055',
+            fact: '#0984e3',
+            story: '#6c5ce7',
+            insight: '#00b894',
+            cta: '#e84393'
+        };
+
+        item.innerHTML = `
+            <div class="scene-header">
+                <span class="scene-badge ${scene.scene_type}">${scene.scene_type}</span>
+                <span class="scene-number">Scene ${scene.scene_number}</span>
+            </div>
+            <div class="scene-text">${scene.text}</div>
+            <div class="scene-prompt">🎨 ${scene.image_prompt || 'No prompt'}</div>
+        `;
+
+        container.appendChild(item);
+    });
+}
+
+function downloadVideo() {
+    if (currentVideoUrl) {
+        const a = document.createElement('a');
+        a.href = currentVideoUrl;
+        a.download = 'reele_video.mp4';
+        a.click();
+    }
+}
+
+// ─── Health Check ──────────────────────────────────────────────────
+
+async function checkHealth() {
+    try {
+        const resp = await fetch('/api/health');
+        const data = await resp.json();
+        const statusDot = document.querySelector('.status-dot');
+        if (data.status === 'healthy') {
+            statusDot.className = 'status-dot ready';
+            document.getElementById('engineStatus').textContent = 'Engine Ready';
+        }
+    } catch (e) {
+        const statusDot = document.querySelector('.status-dot');
+        statusDot.className = 'status-dot error';
+        document.getElementById('engineStatus').textContent = 'Offline';
+    }
+}
+
+checkHealth();
+</script>
+
+</body>
+</html>
