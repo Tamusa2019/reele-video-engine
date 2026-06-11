@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     chromium \
     ffmpeg \
     python3 \
+    python3-pip \
     python3-pil \
     fonts-noto-color-emoji \
     fonts-liberation \
@@ -31,6 +32,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Pillow is now installed via python3-pil apt package (avoids PEP 668 pip error)
+# Install edge-tts for free voiceover generation (Microsoft Edge TTS, no API key needed)
+RUN pip3 install edge-tts --break-system-packages 2>&1 || echo "edge-tts install skipped (will try at runtime)"
 
 # Install z-ai-web-dev-sdk globally for the z-ai-generate CLI tool
 # This enables high-quality AI image generation inside the container

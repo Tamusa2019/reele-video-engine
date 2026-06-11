@@ -246,8 +246,9 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         console.warn('[GenerateVideo] Thumbnail generation failed:', error);
         // Generate a placeholder thumbnail
-        thumbnailUrl = await imageService.generatePlaceholderImage(
+        thumbnailUrl = await imageService.generateAttractivePlaceholder(
           `${sceneJSON.title} - ${validated.topic}`,
+          'vertical',
           projectId
         );
       }

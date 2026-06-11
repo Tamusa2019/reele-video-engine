@@ -266,7 +266,7 @@ def draw_number_circle(img, number):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     cx, cy = WIDTH // 2, int(HEIGHT * 0.25)
-    radius = 40
+    radius = 50
 
     # Glow rings
     for i in range(4, 0, -1):
@@ -287,7 +287,7 @@ def draw_number_circle(img, number):
     )
 
     # Number text
-    font = load_font(38, bold=True)
+    font = load_font(52, bold=True)
     num_text = str(number)
     bbox = font.getbbox(num_text)
     tw = bbox[2] - bbox[0]
@@ -302,9 +302,9 @@ def draw_social_buttons(img, y_start):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     buttons = ["Like", "Share", "Save"]
-    font = load_font(20, bold=True)
-    btn_w = 150
-    btn_h = 54
+    font = load_font(28, bold=True)
+    btn_w = 180
+    btn_h = 64
     gap = 18
     total_w = len(buttons) * btn_w + (len(buttons) - 1) * gap
     start_x = (WIDTH - total_w) // 2
@@ -335,8 +335,8 @@ def draw_subtitle_bar(img, text):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    font = load_font(30, bold=True)
-    max_w = int(WIDTH * 0.85)
+    font = load_font(38, bold=True)
+    max_w = int(WIDTH * 0.88)
     lines = wrap_text(text, font, max_w, max_lines=2)
     display_text = '  '.join(lines)
 
@@ -344,8 +344,8 @@ def draw_subtitle_bar(img, text):
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
 
-    bar_h = th + 40
-    bar_y = HEIGHT - 150
+    bar_h = th + 48
+    bar_y = HEIGHT - 160
     bar_x = (WIDTH - tw - 64) // 2
     bar_w = tw + 64
 
@@ -422,7 +422,7 @@ def render_scene(cfg):
         overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        badge_font = load_font(24, bold=True)
+        badge_font = load_font(30, bold=True)
         badge_text = f"[ {emoji_label} ]"
         badge_bbox = badge_font.getbbox(badge_text)
         badge_w = badge_bbox[2] - badge_bbox[0] + 36
@@ -444,11 +444,11 @@ def render_scene(cfg):
         # Accent line below badge
         img = draw_accent_line(img, badge_y + badge_h + 20, PURPLE, 0.12)
 
-        # Title text
-        title_font = load_font(48, bold=True)
+        # Title text - BIG for mobile viewing
+        title_font = load_font(72, bold=True)
         max_w = int(WIDTH * 0.88)
         lines = wrap_text(text, title_font, max_w, max_lines=4)
-        line_height = 62
+        line_height = 88
         total_h = len(lines) * line_height
         base_y = int(HEIGHT * 0.35)
 
@@ -490,7 +490,7 @@ def render_scene(cfg):
         img = Image.alpha_composite(img.convert('RGBA'), overlay3).convert('RGB')
 
         # Subtitle text
-        subtitle_font = load_font(24, bold=False)
+        subtitle_font = load_font(34, bold=False)
         subtitle = get_subtitle(text)
         sub_lines = wrap_text(subtitle, subtitle_font, int(WIDTH * 0.8), max_lines=2)
         sub_y = base_y + len(lines) * line_height + 30
@@ -511,11 +511,11 @@ def render_scene(cfg):
         # Accent line below circle
         img = draw_accent_line(img, int(HEIGHT * 0.25) + 100, CYAN, 0.10)
 
-        # Title
-        title_font = load_font(42, bold=True)
+        # Title - BIG for mobile
+        title_font = load_font(64, bold=True)
         max_w = int(WIDTH * 0.85)
         lines = wrap_text(text, title_font, max_w, max_lines=3)
-        line_height = 56
+        line_height = 78
         base_y = int(HEIGHT * 0.25) + 120
 
         overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
@@ -552,7 +552,7 @@ def render_scene(cfg):
         img = Image.alpha_composite(img.convert('RGBA'), overlay2).convert('RGB')
 
         # Description subtitle
-        desc_font = load_font(22, bold=False)
+        desc_font = load_font(32, bold=False)
         desc = get_fact_description(text)
         if desc:
             desc_lines = wrap_text(desc, desc_font, int(WIDTH * 0.78), max_lines=3)
@@ -571,7 +571,7 @@ def render_scene(cfg):
         draw = ImageDraw.Draw(overlay)
 
         # Rocket badge
-        badge_font = load_font(26, bold=True)
+        badge_font = load_font(32, bold=True)
         badge_text = "[ ROCKET ]"
         badge_bbox = badge_font.getbbox(badge_text)
         badge_w = badge_bbox[2] - badge_bbox[0] + 36
@@ -589,11 +589,11 @@ def render_scene(cfg):
         badge_text_x = (WIDTH - (badge_bbox[2] - badge_bbox[0])) // 2
         draw.text((badge_text_x, badge_y + 12), badge_text, fill=PINK + (230,), font=badge_font)
 
-        # CTA Title
-        cta_font = load_font(40, bold=True)
+        # CTA Title - BIG
+        cta_font = load_font(60, bold=True)
         max_w = int(WIDTH * 0.85)
         cta_lines = wrap_text(text, cta_font, max_w, max_lines=3)
-        line_height = 54
+        line_height = 72
         cta_y = badge_y + badge_h + 44
 
         for i, line in enumerate(cta_lines):
@@ -613,7 +613,7 @@ def render_scene(cfg):
         img = draw_social_buttons(img, buttons_y)
 
         # Follow text
-        follow_font = load_font(22, bold=True)
+        follow_font = load_font(32, bold=True)
         follow_text = "Follow for more!"
         follow_bbox = follow_font.getbbox(follow_text)
         follow_w = follow_bbox[2] - follow_bbox[0]
@@ -626,10 +626,10 @@ def render_scene(cfg):
 
     else:
         # Transition scene
-        trans_font = load_font(44, bold=True)
+        trans_font = load_font(66, bold=True)
         max_w = int(WIDTH * 0.85)
         lines = wrap_text(text, trans_font, max_w, max_lines=3)
-        line_height = 58
+        line_height = 80
         total_h = len(lines) * line_height
         base_y = int((HEIGHT - total_h) / 2)
 
@@ -730,7 +730,7 @@ export class FfmpegRenderer {
         if (isFact) factCounter++;
 
         // Resolve image path if available
-        const imagePath = this.resolveImagePath(scene.imageUrl, tempDir, i);
+        const imagePath = await this.resolveImagePath(scene.imageUrl, tempDir, i);
 
         const imagePathOut = path.join(tempDir, `scene-${i}.png`);
         await this.generateSceneImage(
@@ -1007,11 +1007,11 @@ export class FfmpegRenderer {
   /**
    * Resolve image URL to a filesystem path, or download if external
    */
-  private resolveImagePath(
+  private async resolveImagePath(
     imageUrl: string | undefined,
     tempDir: string,
     sceneIndex: number
-  ): string {
+  ): Promise<string> {
     if (!imageUrl) return '';
 
     // Local upload path
@@ -1032,7 +1032,27 @@ export class FfmpegRenderer {
 
     // External URL - download to temp dir
     if (imageUrl.startsWith('http')) {
-      return ''; // Can't download synchronously, skip
+      try {
+        const downloadPath = path.join(tempDir, `downloaded-${sceneIndex}.png`);
+        console.log(`[FfmpegRenderer] Downloading image from: ${imageUrl.substring(0, 100)}...`);
+        const response = await fetch(imageUrl, {
+          signal: AbortSignal.timeout(30000),
+        });
+        if (response.ok) {
+          const buffer = Buffer.from(await response.arrayBuffer());
+          if (buffer.length > 1000) {
+            await writeFile(downloadPath, buffer);
+            console.log(`[FfmpegRenderer] Downloaded image (${Math.round(buffer.length / 1024)}KB) for scene ${sceneIndex}`);
+            return downloadPath;
+          }
+          console.warn(`[FfmpegRenderer] Downloaded image too small (${buffer.length} bytes)`);
+        } else {
+          console.warn(`[FfmpegRenderer] Image download failed: HTTP ${response.status}`);
+        }
+      } catch (error) {
+        console.warn(`[FfmpegRenderer] Image download error: ${error instanceof Error ? error.message : error}`);
+      }
+      return '';
     }
 
     // Relative path that might exist

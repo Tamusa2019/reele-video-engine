@@ -1,7 +1,8 @@
 // =============================================================================
-// Voiceover Service - Real TTS using z-ai-web-dev-sdk
-// Generates natural-sounding speech audio for video narration
-// Falls back to proper silent audio (via ffmpeg) when TTS is unavailable
+// Voiceover Service - Real TTS with multiple fallback strategies
+// Primary: z-ai-web-dev-sdk TTS (high quality)
+// Secondary: edge-tts via Python (free Microsoft TTS, no API key needed)
+// Tertiary: Silent placeholder audio (always works)
 // =============================================================================
 
 import { writeFile, mkdir, readFile, unlink, stat } from 'fs/promises';
@@ -17,56 +18,99 @@ let voiceoverInstance: VoiceoverService | null = null;
 
 export class VoiceoverService {
   private ttsAvailable: boolean | null = null;
+  private edgeTtsAvailable: boolean | null = null;
 
   /**
-   * Check if the TTS SDK is available (without making an API call)
-   * Just checks if the module can be imported — saves quota/credits
+   * Check if the z-ai-web-dev-sdk TTS is available
    */
   async isTtsAvailable(): Promise<boolean> {
     if (this.ttsAvailable !== null) return this.ttsAvailable;
 
     try {
       const ZAI = (await import('z-ai-web-dev-sdk')).default;
-      // Just try to create the client — don't make a test API call
       await ZAI.create();
       this.ttsAvailable = true;
-      console.log('[VoiceoverService] TTS SDK available - real voiceover enabled');
+      console.log('[VoiceoverService] z-ai TTS SDK available');
     } catch (error) {
       this.ttsAvailable = false;
-      console.warn('[VoiceoverService] TTS SDK not available, will use placeholder audio:', error instanceof Error ? error.message : error);
+      console.warn('[VoiceoverService] z-ai TTS SDK not available:', error instanceof Error ? error.message : error);
     }
 
     return this.ttsAvailable;
   }
 
   /**
-   * Generate voiceover audio from text using real TTS
-   * Splits long text into chunks (max 1024 chars per TTS request)
-   * Concatenates chunks using ffmpeg
+   * Check if edge-tts Python package is available
+   * edge-tts is a free Microsoft Edge TTS service - no API key needed
+   */
+  async isEdgeTtsAvailable(): Promise<boolean> {
+    if (this.edgeTtsAvailable !== null) return this.edgeTtsAvailable;
+
+    try {
+      await execFileAsync('python3', ['-c', 'import edge_tts; print("edge-tts available")'], { timeout: 5000 });
+      this.edgeTtsAvailable = true;
+      console.log('[VoiceoverService] edge-tts Python package available');
+    } catch {
+      // Try installing edge-tts via pip
+      try {
+        console.log('[VoiceoverService] edge-tts not found, attempting pip install...');
+        await execFileAsync('pip3', ['install', 'edge-tts', '--break-system-packages'], { timeout: 60000 });
+        this.edgeTtsAvailable = true;
+        console.log('[VoiceoverService] edge-tts installed successfully');
+      } catch (installError) {
+        this.edgeTtsAvailable = false;
+        console.warn('[VoiceoverService] edge-tts not available and could not install:', installError instanceof Error ? installError.message : installError);
+      }
+    }
+
+    return this.edgeTtsAvailable;
+  }
+
+  /**
+   * Generate voiceover audio from text using multiple TTS strategies
    */
   async generate(text: string, language: string, speed: number = 1.0): Promise<Buffer> {
     console.log(`[VoiceoverService] Generating voiceover for ${text.length} chars, lang=${language}, speed=${speed}`);
 
-    // Clamp speed to TTS API limits
     const ttsSpeed = Math.max(0.5, Math.min(2.0, speed));
 
-    const available = await this.isTtsAvailable();
-
-    if (available) {
+    // Strategy 1: Try z-ai-web-dev-sdk TTS
+    const zaiAvailable = await this.isTtsAvailable();
+    if (zaiAvailable) {
       try {
-        return await this.generateRealTTS(text, language, ttsSpeed);
+        const result = await this.generateRealTTS(text, language, ttsSpeed);
+        if (result.length > 1000) {
+          console.log(`[VoiceoverService] z-ai TTS generated ${result.length} bytes`);
+          return result;
+        }
+        console.warn('[VoiceoverService] z-ai TTS returned too small result, trying next strategy');
       } catch (error) {
-        console.warn('[VoiceoverService] Real TTS failed, falling back to placeholder:', error instanceof Error ? error.message : error);
-        return this.generatePlaceholderAudio(text, language, speed);
+        console.warn('[VoiceoverService] z-ai TTS failed:', error instanceof Error ? error.message : error);
       }
     }
 
+    // Strategy 2: Try edge-tts (free Microsoft TTS via Python)
+    const edgeAvailable = await this.isEdgeTtsAvailable();
+    if (edgeAvailable) {
+      try {
+        const result = await this.generateViaEdgeTts(text, language, ttsSpeed);
+        if (result.length > 1000) {
+          console.log(`[VoiceoverService] edge-tts generated ${result.length} bytes`);
+          return result;
+        }
+        console.warn('[VoiceoverService] edge-tts returned too small result');
+      } catch (error) {
+        console.warn('[VoiceoverService] edge-tts failed:', error instanceof Error ? error.message : error);
+      }
+    }
+
+    // Strategy 3: Silent placeholder
+    console.log('[VoiceoverService] All TTS strategies failed, using silent placeholder');
     return this.generatePlaceholderAudio(text, language, speed);
   }
 
   /**
    * Generate and save voiceover to a file
-   * @returns Relative URL path to the saved audio file
    */
   async generateAndSave(
     text: string,
@@ -76,40 +120,31 @@ export class VoiceoverService {
   ): Promise<string> {
     const audioBuffer = await this.generate(text, language, speed);
 
-    // Ensure upload directory exists
     await mkdir(UPLOAD_DIR, { recursive: true });
 
-    // Generate filename
     const timestamp = Date.now();
     const filename = projectId
       ? `voiceover-${projectId}-${timestamp}.mp3`
       : `voiceover-${timestamp}.mp3`;
     const filepath = path.join(UPLOAD_DIR, filename);
 
-    // Write file
     await writeFile(filepath, audioBuffer);
 
-    // Return relative URL
     return `/api/upload/${filename}`;
   }
 
   /**
    * Generate real TTS audio using z-ai-web-dev-sdk
-   * Handles text > 1024 chars by splitting into chunks and concatenating
    */
   private async generateRealTTS(text: string, language: string, speed: number): Promise<Buffer> {
     const ZAI = (await import('z-ai-web-dev-sdk')).default;
     const zai = await ZAI.create();
 
-    // Choose voice based on language
-    const voice = 'kazi'; // kazi is clear and standard
-
-    // Split text into chunks of max 1000 chars (leaving margin for 1024 limit)
+    const voice = 'kazi';
     const chunks = this.splitTextIntoChunks(text, 1000);
-    console.log(`[VoiceoverService] TTS: splitting into ${chunks.length} chunks`);
+    console.log(`[VoiceoverService] z-ai TTS: splitting into ${chunks.length} chunks`);
 
     if (chunks.length === 1) {
-      // Simple case: single chunk, generate directly
       const response = await zai.audio.tts.create({
         input: chunks[0],
         voice,
@@ -120,12 +155,10 @@ export class VoiceoverService {
 
       const arrayBuffer = await response.arrayBuffer();
       const wavBuffer = Buffer.from(new Uint8Array(arrayBuffer));
-
-      // Convert WAV to MP3 for smaller file size
       return this.convertWavToMp3(wavBuffer);
     }
 
-    // Multiple chunks: generate each, then concatenate with ffmpeg
+    // Multiple chunks
     const tempDir = path.join(UPLOAD_DIR, `tts-temp-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
 
@@ -148,19 +181,112 @@ export class VoiceoverService {
         await writeFile(chunkPath, buffer);
         chunkPaths.push(chunkPath);
 
-        console.log(`[VoiceoverService] TTS chunk ${i + 1}/${chunks.length} generated (${buffer.length} bytes)`);
+        console.log(`[VoiceoverService] z-ai TTS chunk ${i + 1}/${chunks.length} generated (${buffer.length} bytes)`);
       }
 
-      // Concatenate all WAV chunks into one MP3 using ffmpeg
       return await this.concatenateAudioChunks(chunkPaths);
     } finally {
-      // Clean up temp files
       try {
         const { rm } = await import('fs/promises');
         await rm(tempDir, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
+      } catch {}
+    }
+  }
+
+  /**
+   * Generate voiceover using edge-tts (free Microsoft TTS via Python)
+   * Works without any API key - perfect for HF Spaces
+   */
+  private async generateViaEdgeTts(text: string, language: string, speed: number): Promise<Buffer> {
+    const tempDir = path.join(UPLOAD_DIR, `tts-edge-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+
+    try {
+      const outputPath = path.join(tempDir, 'output.mp3');
+
+      // Choose voice based on language
+      const voiceMap: Record<string, string> = {
+        'en': 'en-US-AriaNeural',
+        'ar': 'ar-SA-HamedNeural',
+      };
+      const voice = voiceMap[language] || 'en-US-AriaNeural';
+
+      // Convert speed from 0.5-2.0 range to edge-tts rate format (+0% to +100%)
+      const ratePercent = Math.round((speed - 1.0) * 100);
+      const rateStr = ratePercent >= 0 ? `+${ratePercent}%` : `${ratePercent}%`;
+
+      // Split text if too long (edge-tts has limits)
+      const chunks = this.splitTextIntoChunks(text, 2000);
+
+      if (chunks.length === 1) {
+        // Single chunk - generate directly
+        const pythonScript = `
+import asyncio, edge_tts, sys
+
+async def main():
+    text = sys.argv[1]
+    voice = sys.argv[2]
+    rate = sys.argv[3]
+    output = sys.argv[4]
+    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    await communicate.save(output)
+
+asyncio.run(main())
+`;
+        await execFileAsync('python3', ['-c', pythonScript, text, voice, rateStr, outputPath], {
+          timeout: 60000,
+          maxBuffer: 10 * 1024 * 1024,
+        });
+      } else {
+        // Multiple chunks - generate each and concatenate
+        const chunkPaths: string[] = [];
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkPath = path.join(tempDir, `chunk-${i}.mp3`);
+          const pythonScript = `
+import asyncio, edge_tts, sys
+
+async def main():
+    text = sys.argv[1]
+    voice = sys.argv[2]
+    rate = sys.argv[3]
+    output = sys.argv[4]
+    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    await communicate.save(output)
+
+asyncio.run(main())
+`;
+          await execFileAsync('python3', ['-c', pythonScript, chunks[i], voice, rateStr, chunkPath], {
+            timeout: 60000,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+          chunkPaths.push(chunkPath);
+        }
+
+        // Concatenate chunks
+        if (chunkPaths.length > 0) {
+          const concatContent = chunkPaths.map(p => `file '${p}'`).join('\n');
+          const concatFilePath = path.join(tempDir, 'concat.txt');
+          await writeFile(concatFilePath, concatContent);
+
+          await execFileAsync('ffmpeg', [
+            '-f', 'concat', '-safe', '0', '-i', concatFilePath,
+            '-c:a', 'libmp3lame', '-b:a', '128k', '-y', outputPath,
+          ], { timeout: 60000 });
+        }
       }
+
+      if (existsSync(outputPath)) {
+        const buffer = await readFile(outputPath);
+        console.log(`[VoiceoverService] edge-tts generated ${buffer.length} bytes MP3`);
+        return buffer;
+      }
+
+      throw new Error('edge-tts output file not found');
+    } finally {
+      try {
+        const { rm } = await import('fs/promises');
+        await rm(tempDir, { recursive: true, force: true });
+      } catch {}
     }
   }
 
@@ -186,7 +312,7 @@ export class VoiceoverService {
   }
 
   /**
-   * Convert WAV buffer to MP3 using ffmpeg for smaller file size
+   * Convert WAV buffer to MP3 using ffmpeg
    */
   private async convertWavToMp3(wavBuffer: Buffer): Promise<Buffer> {
     const tempDir = path.join(UPLOAD_DIR, `tts-convert-${Date.now()}`);
@@ -210,28 +336,24 @@ export class VoiceoverService {
       const mp3Buffer = await readFile(mp3Path);
       return mp3Buffer;
     } catch (error) {
-      // If ffmpeg conversion fails, return the original WAV
       console.warn('[VoiceoverService] WAV to MP3 conversion failed, using raw WAV:', error instanceof Error ? error.message : error);
       return wavBuffer;
     } finally {
       try {
         const { rm } = await import('fs/promises');
         await rm(tempDir, { recursive: true, force: true });
-      } catch {
-        // Ignore
-      }
+      } catch {}
     }
   }
 
   /**
-   * Concatenate multiple WAV audio chunks into one MP3
+   * Concatenate multiple audio chunks into one MP3
    */
   private async concatenateAudioChunks(chunkPaths: string[]): Promise<Buffer> {
     const tempDir = path.join(UPLOAD_DIR, `tts-concat-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
 
     try {
-      // Create concat list file
       const concatContent = chunkPaths.map(p => `file '${p}'`).join('\n');
       const concatFilePath = path.join(tempDir, 'concat.txt');
       await writeFile(concatFilePath, concatContent);
@@ -253,7 +375,6 @@ export class VoiceoverService {
       console.log(`[VoiceoverService] Concatenated ${chunkPaths.length} chunks into ${outputBuffer.length} bytes MP3`);
       return outputBuffer;
     } catch (error) {
-      // If concatenation fails, return the first chunk as-is
       console.warn('[VoiceoverService] Audio concatenation failed:', error instanceof Error ? error.message : error);
       if (chunkPaths.length > 0) {
         return readFile(chunkPaths[0]);
@@ -263,16 +384,13 @@ export class VoiceoverService {
       try {
         const { rm } = await import('fs/promises');
         await rm(tempDir, { recursive: true, force: true });
-      } catch {
-        // Ignore
-      }
+      } catch {}
     }
   }
 
   /**
    * Generate placeholder audio when TTS is unavailable
-   * Uses ffmpeg to create a proper silent MP3 file (not corrupt raw bytes)
-   * This ensures the video always has an audio track for proper playback
+   * Uses ffmpeg to create proper silent MP3
    */
   private async generatePlaceholderAudio(text: string, language: string, speed: number): Promise<Buffer> {
     const durationSeconds = this.estimateDuration(text, language, speed);
@@ -283,8 +401,6 @@ export class VoiceoverService {
     try {
       const outputPath = path.join(tempDir, 'silence.mp3');
 
-      // Use ffmpeg to generate proper silent MP3 via lavfi anullsrc
-      // This creates a valid, non-corrupt audio file
       await execFileAsync('ffmpeg', [
         '-f', 'lavfi',
         '-i', `anullsrc=r=44100:cl=stereo`,
@@ -296,26 +412,21 @@ export class VoiceoverService {
       ], { timeout: 30000 });
 
       const audioBuffer = await readFile(outputPath);
-      console.log(`[VoiceoverService] Generated ${durationSeconds}s silent placeholder audio via ffmpeg (${audioBuffer.length} bytes)`);
+      console.log(`[VoiceoverService] Generated ${durationSeconds}s silent placeholder audio (${audioBuffer.length} bytes)`);
       return audioBuffer;
     } catch (error) {
-      // ffmpeg not available — create a minimal valid WAV file programmatically
-      console.warn('[VoiceoverService] ffmpeg silent audio generation failed, creating WAV programmatically:', error instanceof Error ? error.message : error);
+      console.warn('[VoiceoverService] ffmpeg silent audio generation failed:', error instanceof Error ? error.message : error);
       return this.generateMinimalSilentWav(durationSeconds);
     } finally {
       try {
         const { rm } = await import('fs/promises');
         await rm(tempDir, { recursive: true, force: true });
-      } catch {
-        // Ignore
-      }
+      } catch {}
     }
   }
 
   /**
-   * Generate a minimal valid WAV file with silence programmatically
-   * This is the absolute last resort when ffmpeg is not available
-   * Produces a valid WAV with proper headers that any player can decode
+   * Generate a minimal valid WAV file with silence
    */
   private generateMinimalSilentWav(durationSeconds: number): Buffer {
     const sampleRate = 44100;
@@ -324,31 +435,23 @@ export class VoiceoverService {
     const numSamples = sampleRate * durationSeconds;
     const dataSize = numSamples * numChannels * (bitsPerSample / 8);
 
-    // WAV file structure: RIFF header + fmt chunk + data chunk
     const headerSize = 44;
     const buffer = Buffer.alloc(headerSize + dataSize);
 
-    // RIFF header
     buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(36 + dataSize, 4); // File size - 8
+    buffer.writeUInt32LE(36 + dataSize, 4);
     buffer.write('WAVE', 8);
-
-    // fmt sub-chunk
     buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16); // Sub-chunk size
-    buffer.writeUInt16LE(1, 20); // Audio format (PCM)
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
     buffer.writeUInt16LE(numChannels, 22);
     buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(sampleRate * numChannels * (bitsPerSample / 8), 28); // Byte rate
-    buffer.writeUInt16LE(numChannels * (bitsPerSample / 8), 32); // Block align
+    buffer.writeUInt32LE(sampleRate * numChannels * (bitsPerSample / 8), 28);
+    buffer.writeUInt16LE(numChannels * (bitsPerSample / 8), 32);
     buffer.writeUInt16LE(bitsPerSample, 34);
-
-    // data sub-chunk
     buffer.write('data', 36);
     buffer.writeUInt32LE(dataSize, 40);
-    // Data is all zeros (silence) - Buffer.alloc already fills with 0
 
-    console.log(`[VoiceoverService] Generated ${durationSeconds}s silent WAV programmatically (${buffer.length} bytes)`);
     return buffer;
   }
 
@@ -373,7 +476,7 @@ export class VoiceoverService {
     const wordCount = text.split(/\s+/).length;
     const wordsPerMinute = language === 'ar' ? 120 : 150;
     const durationMinutes = wordCount / (wordsPerMinute * speed);
-    return Math.max(5, Math.ceil(durationMinutes * 60)); // Minimum 5 seconds
+    return Math.max(5, Math.ceil(durationMinutes * 60));
   }
 }
 
