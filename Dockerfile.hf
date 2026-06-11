@@ -1,12 +1,13 @@
 FROM node:20-slim
 
-# Install Chrome + ffmpeg + python3 + fonts + deps for Remotion and FFmpeg rendering
-# python3: needed for PNG fallback generation when ffmpeg fails
+# Install Chrome + ffmpeg + python3 + Pillow + fonts + deps for Remotion and FFmpeg rendering
+# python3 + Pillow: needed for professional scene image generation
 # z-ai-web-dev-sdk: provides z-ai-generate CLI for high-quality AI image generation
 RUN apt-get update && apt-get install -y \
     chromium \
     ffmpeg \
     python3 \
+    python3-pip \
     fonts-noto-color-emoji \
     fonts-liberation \
     fonts-noto-cjk \
@@ -29,13 +30,17 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Pillow for professional scene image generation (used by ffmpeg-renderer.ts)
+RUN python3 -m pip install --no-cache-dir Pillow 2>&1
+
 # Install z-ai-web-dev-sdk globally for the z-ai-generate CLI tool
 # This enables high-quality AI image generation inside the container
 RUN npm install -g z-ai-web-dev-sdk 2>&1 || true
 
-# Verify ffmpeg and python3 are installed
+# Verify ffmpeg, python3, and Pillow are installed
 RUN ffmpeg -version | head -1
 RUN python3 --version
+RUN python3 -c "from PIL import Image; print('Pillow:', Image.__version__)"
 
 # Browser paths for Remotion (also read by video-renderer.ts)
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -45,8 +50,9 @@ ENV REMOTION_CHROME_PATH=/usr/bin/chromium
 # Font path for FFmpeg text overlay (video-renderer.ts reads this)
 ENV FONT_PATH=/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf
 
-# Render method: 'auto' (try Remotion, fallback to ffmpeg), 'ffmpeg', or 'remotion'
-ENV RENDER_METHOD=auto
+# Render method: use ffmpeg directly (Pillow-based, professional quality)
+# Remotion fails in HF Spaces Docker due to browser issues
+ENV RENDER_METHOD=ffmpeg
 
 # Disable credits for testing (set to 'false' to re-enable credit checks)
 ENV CREDITS_DISABLED=true
