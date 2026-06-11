@@ -209,10 +209,29 @@ export class VideoRenderService {
     await mkdir(propsDir, { recursive: true });
 
     const propsFilePath = path.join(propsDir, `${jobId}-props.json`);
+
+    // CRITICAL FIX: Convert relative URLs to absolute URLs with the correct port.
+    // Remotion's bundle server runs on a different port (3000) than Next.js (7860).
+    // Relative URLs like "/api/upload/scene.png" would 404 inside Remotion.
+    const serverPort = process.env.PORT || '7860';
+    const serverOrigin = `http://localhost:${serverPort}`;
+
     const compositionProps = {
-      scenes: config.scenes,
-      branding: config.branding,
-      voiceoverUrl: config.voiceoverUrl || undefined,
+      scenes: config.scenes.map(scene => ({
+        ...scene,
+        imageUrl: scene.imageUrl
+          ? (scene.imageUrl.startsWith('/') ? `${serverOrigin}${scene.imageUrl}` : scene.imageUrl)
+          : undefined,
+      })),
+      branding: {
+        ...config.branding,
+        logoUrl: config.branding.logoUrl
+          ? (config.branding.logoUrl.startsWith('/') ? `${serverOrigin}${config.branding.logoUrl}` : config.branding.logoUrl)
+          : undefined,
+      },
+      voiceoverUrl: config.voiceoverUrl
+        ? (config.voiceoverUrl.startsWith('/') ? `${serverOrigin}${config.voiceoverUrl}` : config.voiceoverUrl)
+        : undefined,
       subtitleUrl: config.subtitleUrl || undefined,
       title: config.compositionId,
     };

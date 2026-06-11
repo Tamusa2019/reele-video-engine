@@ -1,7 +1,7 @@
 // =============================================================================
 // FFmpeg Video Renderer - Browser-free video rendering fallback
 // Uses ffmpeg directly to create videos from scene images + text + audio
-// Much more reliable in Docker/HF Spaces environments than browser-based rendering
+// Professional scene styling matching the Remotion composition design
 // =============================================================================
 
 import { execFile } from 'child_process';
@@ -15,6 +15,16 @@ import type { RemotionConfig, SceneData } from '@/lib/types';
 const execFileAsync = promisify(execFile);
 
 let ffmpegRendererInstance: FfmpegRenderer | null = null;
+
+// Scene-type color schemes matching the HTML/Remotion design
+const SCENE_COLORS: Record<string, { c0: string; c1: string; accent: string }> = {
+  hook:        { c0: '0x0B1026', c1: '0x2D1B69', accent: '0xA855F7' },  // Dark to purple
+  problem:     { c0: '0x0F1A3E', c1: '0x1A2B5F', accent: '0x22D3EE' },  // Navy gradient
+  solution:    { c0: '0x0B1026', c1: '0x1A3A5F', accent: '0x4ADE80' },  // Navy to teal
+  proof:       { c0: '0x0F0A1A', c1: '0x2D1B69', accent: '0xFFD700' },  // Dark to purple-gold
+  cta:         { c0: '0x0F1A3E', c1: '0x4A1942', accent: '0xEC4899' },  // Navy to pink
+  transition:  { c0: '0x0B1026', c1: '0x1A2B5F', accent: '0xA855F7' },  // Standard navy
+};
 
 export class FfmpegRenderer {
   private ffmpegPath: string;
@@ -79,7 +89,7 @@ export class FfmpegRenderer {
       const sceneImages = await this.prepareSceneImages(config, tempDir);
       onProgress?.(15);
 
-      // Step 2: Create individual scene clips
+      // Step 2: Create individual scene clips with professional styling
       const clipPaths: string[] = [];
       for (let i = 0; i < config.scenes.length; i++) {
         const scene = config.scenes[i];
@@ -92,7 +102,9 @@ export class FfmpegRenderer {
           duration,
           scene,
           config,
-          clipPath
+          clipPath,
+          i,
+          config.scenes.length
         );
 
         clipPaths.push(clipPath);
@@ -164,13 +176,13 @@ export class FfmpegRenderer {
       const scene = config.scenes[i];
       let imagePath = this.imageUrlToFilePath(scene.imageUrl);
 
-      // If the image doesn't exist or is SVG, create a blank background
+      // If the image doesn't exist or is SVG, create a gradient background
       if (
         !imagePath ||
         !existsSync(imagePath) ||
         imagePath.toLowerCase().endsWith('.svg')
       ) {
-        imagePath = await this.createBlankImage(
+        imagePath = await this.createGradientBackground(
           scene,
           config,
           tempDir,
@@ -217,53 +229,68 @@ export class FfmpegRenderer {
   }
 
   /**
-   * Create a gradient background image matching the HTML design
-   * Navy dark gradient with accent color touches
+   * Create a gradient background image based on scene type
+   * Matches the HTML design with navy-dark gradients and accent color touches
    */
-  private async createBlankImage(
+  private async createGradientBackground(
     scene: SceneData,
     config: RemotionConfig,
     tempDir: string,
     index: number
   ): Promise<string> {
     const outputPath = path.join(tempDir, `blank-${index}.png`);
+    const colors = SCENE_COLORS[scene.type] || SCENE_COLORS.transition;
 
-    // Create a gradient background matching the HTML navy-dark design
-    // Use a two-tone gradient from dark navy to lighter navy
-    const args = [
-      '-f', 'lavfi',
-      '-i', `gradients=s=${config.width}x${config.height}:c0=0x0F1A3E:c1=0x1A2B5F:duration=1:direction=diagonal`,
-      '-frames:v', '1',
-      '-y',
-      outputPath,
-    ];
-
+    // Try gradients filter first (produces nice diagonal gradients)
     try {
-      await execFileAsync(this.ffmpegPath, args, { timeout: 10000 });
-    } catch {
-      // Fallback to solid color if gradients filter not available
-      const fallbackArgs = [
+      await execFileAsync(this.ffmpegPath, [
         '-f', 'lavfi',
-        '-i', `color=c=0x0F1A3E:s=${config.width}x${config.height}:d=1`,
+        '-i', `gradients=s=${config.width}x${config.height}:c0=${colors.c0}:c1=${colors.c1}:duration=1:direction=diagonal`,
         '-frames:v', '1',
+        '-pix_fmt', 'yuv420p',
         '-y',
         outputPath,
-      ];
-      await execFileAsync(this.ffmpegPath, fallbackArgs, { timeout: 10000 });
+      ], { timeout: 10000 });
+      return outputPath;
+    } catch {
+      // gradients filter not available, try solid color
     }
 
+    // Fallback: solid color background
+    try {
+      await execFileAsync(this.ffmpegPath, [
+        '-f', 'lavfi',
+        '-i', `color=c=${colors.c0}:s=${config.width}x${config.height}:d=1`,
+        '-frames:v', '1',
+        '-pix_fmt', 'yuv420p',
+        '-y',
+        outputPath,
+      ], { timeout: 10000 });
+      return outputPath;
+    } catch {
+      // Even solid color failed, create minimal PNG
+    }
+
+    // Last resort: write minimal valid PNG
+    const MINIMAL_PNG = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    await writeFile(outputPath, MINIMAL_PNG);
     return outputPath;
   }
 
   /**
-   * Create a video clip for a single scene
+   * Create a video clip for a single scene with professional styling
    */
   private async createSceneClip(
     imagePath: string,
     duration: number,
     scene: SceneData,
     config: RemotionConfig,
-    outputPath: string
+    outputPath: string,
+    sceneIndex: number,
+    totalScenes: number
   ): Promise<void> {
     // Build video filter chain
     const filters: string[] = [];
@@ -278,20 +305,10 @@ export class FfmpegRenderer {
     filters.push('setsar=1');
     filters.push(`fps=${config.fps}`);
 
-    // Add text overlay if the scene has text
-    if (scene.text && scene.text.trim().length > 0) {
-      const textFilter = this.createTextFilter(scene, config);
-      if (textFilter) {
-        filters.push(textFilter);
-      }
-    }
-
-    // Scene type badge (for hook scenes)
-    if (scene.type === 'hook') {
-      const badgeFilter = this.createBadgeFilter(scene, config);
-      if (badgeFilter) {
-        filters.push(badgeFilter);
-      }
+    // Add scene-type-specific overlays
+    const styledFilters = this.createStyledTextFilters(scene, config, sceneIndex, totalScenes);
+    for (const f of styledFilters) {
+      filters.push(f);
     }
 
     const filterChain = filters.join(',');
@@ -314,18 +331,47 @@ export class FfmpegRenderer {
     console.log(`[FfmpegRenderer] Creating clip for scene "${scene.type}" (${duration}s)`);
 
     try {
-      const { stdout, stderr } = await execFileAsync(this.ffmpegPath, args, {
-        timeout: 120000, // 2 minute timeout per scene
+      await execFileAsync(this.ffmpegPath, args, {
+        timeout: 120000,
         maxBuffer: 10 * 1024 * 1024,
       });
     } catch (error: any) {
-      // If drawtext fails (e.g., font not found), retry without text overlay
+      // If styled text overlay fails, retry with simpler approach
       if (filterChain.includes('drawtext') && error.message?.includes('Error')) {
         console.warn(
-          `[FfmpegRenderer] Text overlay failed, retrying without text for scene "${scene.type}"`
+          `[FfmpegRenderer] Styled text overlay failed, retrying with simple text for scene "${scene.type}"`
         );
         const simpleFilters = filters.filter((f) => !f.includes('drawtext')).join(',');
-        const retryArgs = [
+
+        // Add a simple centered text as fallback
+        if (scene.text && scene.text.trim().length > 0) {
+          const simpleText = this.createSimpleTextFilter(scene, config);
+          if (simpleText) {
+            const retryChain = simpleFilters + (simpleFilters ? ',' : '') + simpleText;
+            const retryArgs = [
+              '-loop', '1',
+              '-t', duration.toString(),
+              '-i', imagePath,
+              '-vf', retryChain,
+              '-c:v', 'libx264',
+              '-pix_fmt', 'yuv420p',
+              '-preset', 'slow',
+              '-crf', '18',
+              '-b:v', '2M',
+              '-r', config.fps.toString(),
+              '-y',
+              outputPath,
+            ];
+            await execFileAsync(this.ffmpegPath, retryArgs, {
+              timeout: 120000,
+              maxBuffer: 10 * 1024 * 1024,
+            });
+            return;
+          }
+        }
+
+        // Even simple text failed, render without any text
+        const noTextArgs = [
           '-loop', '1',
           '-t', duration.toString(),
           '-i', imagePath,
@@ -339,7 +385,7 @@ export class FfmpegRenderer {
           '-y',
           outputPath,
         ];
-        await execFileAsync(this.ffmpegPath, retryArgs, {
+        await execFileAsync(this.ffmpegPath, noTextArgs, {
           timeout: 120000,
           maxBuffer: 10 * 1024 * 1024,
         });
@@ -350,60 +396,164 @@ export class FfmpegRenderer {
   }
 
   /**
-   * Create ffmpeg drawtext filter for scene text overlay
-   * Matches the HTML design: centered white text with shadow on dark overlay
+   * Create styled text filters based on scene type
+   * Matches the Remotion composition design: progress bar, slide counter,
+   * emoji for hooks, number circles for facts, CTA buttons
    */
-  private createTextFilter(scene: SceneData, config: RemotionConfig): string | null {
-    try {
-      // Split text into lines of ~25 characters each for better readability
-      const lines = this.wrapText(scene.text, 25);
-      const escapedLines = lines.map((line) => this.escapeFfmpegText(line));
+  private createStyledTextFilters(
+    scene: SceneData,
+    config: RemotionConfig,
+    sceneIndex: number,
+    totalScenes: number
+  ): string[] {
+    const filters: string[] = [];
+    const fontSpec = this.fontPath.includes('/')
+      ? `fontfile=${this.fontPath}`
+      : `font=${this.fontPath}`;
+    const colors = SCENE_COLORS[scene.type] || SCENE_COLORS.transition;
 
-      // Position text in the center of the video (slightly below center)
-      const fontSize = scene.type === 'hook' ? 56 : scene.type === 'cta' ? 48 : 42;
-      const lineSpacing = fontSize * 1.4;
-      const totalTextHeight = lines.length * lineSpacing;
+    // 1. Progress bar at top (matching Remotion design)
+    const progressWidth = Math.floor(((sceneIndex + 1) / totalScenes) * config.width);
+    filters.push(
+      `drawbox=x=0:y=0:w=${progressWidth}:h=3:color=0xEC4899@1:t=fill`
+    );
 
-      // Y position: centered vertically (slightly below center for readability)
-      const baseY = Math.floor((config.height - totalTextHeight) / 2 + config.height * 0.15);
+    // 2. Slide counter (top-left, matching Remotion design)
+    const counterText = this.escapeFfmpegText(`${sceneIndex + 1} / ${totalScenes}`);
+    filters.push(
+      `drawtext=${fontSpec}:text='${counterText}':fontsize=22:fontcolor=0xA855F7@0.9:x=28:y=22`
+    );
 
-      // Build drawtext filters for each line
-      const drawtextFilters: string[] = [];
+    // 3. Scene-type-specific text overlays
+    if (!scene.text || scene.text.trim().length === 0) return filters;
 
-      const fontSpec = this.fontPath.includes('/')
-        ? `fontfile=${this.fontPath}`
-        : `font=${this.fontPath}`;
+    const lines = this.wrapText(scene.text, 25);
+    const escapedLines = lines.map((line) => this.escapeFfmpegText(line));
+
+    if (scene.type === 'hook') {
+      // Hook scene: large title with shadow, slightly above center
+      const fontSize = 52;
+      const lineSpacing = fontSize * 1.35;
+      const totalHeight = lines.length * lineSpacing;
+      const baseY = Math.floor((config.height - totalHeight) / 2 - config.height * 0.05);
 
       for (let i = 0; i < escapedLines.length; i++) {
         const y = baseY + i * lineSpacing;
-
-        // Text line with shadow and background
-        const textFilter =
-          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.7:shadowx=3:shadowy=3:box=1:boxcolor=black@0.4:boxborderw=12`;
-
-        drawtextFilters.push(textFilter);
+        filters.push(
+          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.7:shadowx=3:shadowy=3:box=1:boxcolor=black@0.35:boxborderw=14`
+        );
       }
 
-      return drawtextFilters.join(',');
-    } catch (error) {
-      console.warn('[FfmpegRenderer] Failed to create text filter:', error);
-      return null;
+      // Hook badge at top center
+      const badgeText = this.escapeFfmpegText('HOOK');
+      filters.push(
+        `drawtext=${fontSpec}:text='${badgeText}':fontsize=20:fontcolor=white:x=(w-text_w)/2:y=120:box=1:boxcolor=${colors.accent}@1:boxborderw=8`
+      );
+
+    } else if (['problem', 'solution', 'proof'].includes(scene.type)) {
+      // Fact/numbered scene: number circle + title + description
+      const factNumber = sceneIndex + 1;
+      const circleY = Math.floor(config.height * 0.28);
+
+      // Number circle (simulated with drawtext in a colored box)
+      const numText = this.escapeFfmpegText(`${factNumber}`);
+      filters.push(
+        `drawtext=${fontSpec}:text='${numText}':fontsize=38:fontcolor=${colors.accent}:x=(w-text_w)/2:y=${circleY}:box=1:boxcolor=${colors.accent}@0.15:boxborderw=20`
+      );
+
+      // Title text below the number
+      const fontSize = 38;
+      const lineSpacing = fontSize * 1.35;
+      const totalHeight = lines.length * lineSpacing;
+      const baseY = circleY + 100;
+
+      for (let i = 0; i < escapedLines.length; i++) {
+        const y = baseY + i * lineSpacing;
+        filters.push(
+          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.7:shadowx=3:shadowy=3:box=1:boxcolor=black@0.35:boxborderw=12`
+        );
+      }
+
+    } else if (scene.type === 'cta') {
+      // CTA scene: title + social buttons + follow text
+      const fontSize = 42;
+      const lineSpacing = fontSize * 1.3;
+      const totalHeight = lines.length * lineSpacing;
+      const baseY = Math.floor((config.height - totalHeight) / 2 - config.height * 0.1);
+
+      // Title
+      for (let i = 0; i < escapedLines.length; i++) {
+        const y = baseY + i * lineSpacing;
+        filters.push(
+          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.7:shadowx=3:shadowy=3:box=1:boxcolor=black@0.35:boxborderw=14`
+        );
+      }
+
+      // Social buttons (Like, Share, Save)
+      const buttonY = baseY + totalHeight + 60;
+      const buttonLabels = ['Like', 'Share', 'Save'];
+      const buttonEmojis = ['❤️', '🔗', '🔖'];
+      const buttonSpacing = Math.floor(config.width / 4);
+
+      for (let i = 0; i < buttonLabels.length; i++) {
+        const bx = buttonSpacing * (i + 1) - 40;
+        const bt = this.escapeFfmpegText(`${buttonEmojis[i]} ${buttonLabels[i]}`);
+        filters.push(
+          `drawtext=${fontSpec}:text='${bt}':fontsize=22:fontcolor=white:x=${bx}:y=${buttonY}:box=1:boxcolor=white@0.08:boxborderw=12`
+        );
+      }
+
+      // Follow text
+      const followY = buttonY + 70;
+      const followText = this.escapeFfmpegText('Follow for more!');
+      filters.push(
+        `drawtext=${fontSpec}:text='${followText}':fontsize=24:fontcolor=${colors.accent}:x=(w-text_w)/2:y=${followY}`
+      );
+
+    } else {
+      // Transition or other: simple centered text
+      const fontSize = 36;
+      const lineSpacing = fontSize * 1.35;
+      const totalHeight = lines.length * lineSpacing;
+      const baseY = Math.floor((config.height - totalHeight) / 2);
+
+      for (let i = 0; i < escapedLines.length; i++) {
+        const y = baseY + i * lineSpacing;
+        filters.push(
+          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.7:shadowx=3:shadowy=3`
+        );
+      }
     }
+
+    return filters;
   }
 
   /**
-   * Create a badge filter for hook scenes
+   * Create a simple centered text filter as fallback
    */
-  private createBadgeFilter(scene: SceneData, config: RemotionConfig): string | null {
+  private createSimpleTextFilter(scene: SceneData, config: RemotionConfig): string | null {
     try {
       const fontSpec = this.fontPath.includes('/')
         ? `fontfile=${this.fontPath}`
         : `font=${this.fontPath}`;
 
-      return (
-        `drawtext=${fontSpec}:text='HOOK':fontsize=24:fontcolor=white:` +
-        `x=(w-text_w)/2:y=${120}:box=1:boxcolor=${config.branding.accentColor || '#FF6B35'}@1:boxborderw=8`
-      );
+      const lines = this.wrapText(scene.text, 25);
+      const escapedLines = lines.map((line) => this.escapeFfmpegText(line));
+
+      const fontSize = scene.type === 'hook' ? 48 : 36;
+      const lineSpacing = fontSize * 1.4;
+      const totalTextHeight = lines.length * lineSpacing;
+      const baseY = Math.floor((config.height - totalTextHeight) / 2 + config.height * 0.15);
+
+      const drawtextFilters: string[] = [];
+      for (let i = 0; i < escapedLines.length; i++) {
+        const y = baseY + i * lineSpacing;
+        drawtextFilters.push(
+          `drawtext=${fontSpec}:text='${escapedLines[i]}':fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${y}:shadowcolor=black@0.7:shadowx=3:shadowy=3:box=1:boxcolor=black@0.4:boxborderw=12`
+        );
+      }
+
+      return drawtextFilters.join(',');
     } catch {
       return null;
     }
@@ -435,6 +585,7 @@ export class FfmpegRenderer {
 
     await writeFile(concatFilePath, concatContent);
 
+    // Try fast copy first, fall back to re-encode
     const args = [
       '-f', 'concat',
       '-safe', '0',
@@ -449,7 +600,7 @@ export class FfmpegRenderer {
         timeout: 60000,
         maxBuffer: 10 * 1024 * 1024,
       });
-    } catch (error) {
+    } catch {
       // If concat copy fails (different codecs), re-encode
       console.warn(
         '[FfmpegRenderer] Concat copy failed, re-encoding...'
@@ -482,34 +633,72 @@ export class FfmpegRenderer {
 
   /**
    * Add audio track to a video
+   * Tries direct merge → re-encode audio first → copy video without audio
    */
   private async addAudio(
     videoPath: string,
     audioPath: string,
     outputPath: string
   ): Promise<void> {
-    const args = [
-      '-i', videoPath,
-      '-i', audioPath,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-shortest',
-      '-y',
-      outputPath,
-    ];
-
+    // Strategy 1: Direct merge (fastest)
     try {
-      await execFileAsync(this.ffmpegPath, args, {
+      await execFileAsync(this.ffmpegPath, [
+        '-i', videoPath,
+        '-i', audioPath,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-shortest',
+        '-y',
+        outputPath,
+      ], {
         timeout: 60000,
         maxBuffer: 10 * 1024 * 1024,
       });
-    } catch (error) {
-      // If audio merge fails, just use the video without audio
-      console.warn('[FfmpegRenderer] Audio merge failed, using video without audio:', error);
-      const { copyFile } = await import('fs/promises');
-      await copyFile(videoPath, outputPath);
+      return;
+    } catch {
+      console.warn('[FfmpegRenderer] Direct audio merge failed, trying re-encode...');
     }
+
+    // Strategy 2: Re-encode audio first, then merge
+    try {
+      const tempDir = path.dirname(videoPath);
+      const reencodedAudio = path.join(tempDir, 'reencoded-audio.mp3');
+
+      await execFileAsync(this.ffmpegPath, [
+        '-i', audioPath,
+        '-c:a', 'libmp3lame',
+        '-b:a', '128k',
+        '-ar', '44100',
+        '-y',
+        reencodedAudio,
+      ], { timeout: 30000 });
+
+      await execFileAsync(this.ffmpegPath, [
+        '-i', videoPath,
+        '-i', reencodedAudio,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-shortest',
+        '-y',
+        outputPath,
+      ], {
+        timeout: 60000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+
+      // Clean up re-encoded audio
+      try { await unlink(reencodedAudio); } catch {}
+      return;
+    } catch {
+      console.warn('[FfmpegRenderer] Re-encoded audio merge also failed');
+    }
+
+    // Strategy 3: Use video without audio (better than no output)
+    console.warn('[FfmpegRenderer] All audio merge attempts failed, using video without audio');
+    const { copyFile } = await import('fs/promises');
+    await copyFile(videoPath, outputPath);
   }
 
   /**
@@ -554,27 +743,6 @@ export class FfmpegRenderer {
       .replace(/\]/g, '')
       .replace(/\n/g, ' ')
       .trim();
-  }
-
-  /**
-   * Convert hex color to RGB
-   */
-  private hexToRgb(hex: string): { r: number; g: number; b: number } {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result
-      ? {
-          r: parseInt(result[1], 16),
-          g: parseInt(result[2], 16),
-          b: parseInt(result[3], 16),
-        }
-      : { r: 26, g: 43, b: 95 }; // Default: #1A2B5F
-  }
-
-  /**
-   * Convert RGB to hex string
-   */
-  private rgbToHex(r: number, g: number, b: number): string {
-    return [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('');
   }
 }
 

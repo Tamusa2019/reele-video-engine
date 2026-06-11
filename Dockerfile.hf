@@ -1,9 +1,12 @@
 FROM node:20-slim
 
-# Install Chrome + ffmpeg + fonts + deps for Remotion and FFmpeg rendering
+# Install Chrome + ffmpeg + python3 + fonts + deps for Remotion and FFmpeg rendering
+# python3: needed for PNG fallback generation when ffmpeg fails
+# z-ai-web-dev-sdk: provides z-ai-generate CLI for high-quality AI image generation
 RUN apt-get update && apt-get install -y \
     chromium \
     ffmpeg \
+    python3 \
     fonts-noto-color-emoji \
     fonts-liberation \
     fonts-noto-cjk \
@@ -26,8 +29,13 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Verify ffmpeg is installed
+# Install z-ai-web-dev-sdk globally for the z-ai-generate CLI tool
+# This enables high-quality AI image generation inside the container
+RUN npm install -g z-ai-web-dev-sdk 2>&1 || true
+
+# Verify ffmpeg and python3 are installed
 RUN ffmpeg -version | head -1
+RUN python3 --version
 
 # Browser paths for Remotion (also read by video-renderer.ts)
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium

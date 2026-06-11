@@ -1,7 +1,7 @@
 // =============================================================================
 // Voiceover Service - Real TTS using z-ai-web-dev-sdk
 // Generates natural-sounding speech audio for video narration
-// Falls back to placeholder audio only if TTS is unavailable
+// Falls back to proper silent audio (via ffmpeg) when TTS is unavailable
 // =============================================================================
 
 import { writeFile, mkdir, readFile, unlink, stat } from 'fs/promises';
@@ -19,22 +19,16 @@ export class VoiceoverService {
   private ttsAvailable: boolean | null = null;
 
   /**
-   * Check if the TTS SDK is available
+   * Check if the TTS SDK is available (without making an API call)
+   * Just checks if the module can be imported — saves quota/credits
    */
   async isTtsAvailable(): Promise<boolean> {
     if (this.ttsAvailable !== null) return this.ttsAvailable;
 
     try {
       const ZAI = (await import('z-ai-web-dev-sdk')).default;
-      const zai = await ZAI.create();
-      // Test with a tiny text
-      await zai.audio.tts.create({
-        input: 'Test',
-        voice: 'kazi',
-        speed: 1.0,
-        response_format: 'wav',
-        stream: false,
-      });
+      // Just try to create the client — don't make a test API call
+      await ZAI.create();
       this.ttsAvailable = true;
       console.log('[VoiceoverService] TTS SDK available - real voiceover enabled');
     } catch (error) {
@@ -63,11 +57,11 @@ export class VoiceoverService {
         return await this.generateRealTTS(text, language, ttsSpeed);
       } catch (error) {
         console.warn('[VoiceoverService] Real TTS failed, falling back to placeholder:', error instanceof Error ? error.message : error);
-        return this.generatePlaceholder(text, language, speed);
+        return this.generatePlaceholderAudio(text, language, speed);
       }
     }
 
-    return this.generatePlaceholder(text, language, speed);
+    return this.generatePlaceholderAudio(text, language, speed);
   }
 
   /**
@@ -108,7 +102,7 @@ export class VoiceoverService {
     const zai = await ZAI.create();
 
     // Choose voice based on language
-    const voice = language === 'ar' ? 'kazi' : 'kazi'; // kazi is clear and standard
+    const voice = 'kazi'; // kazi is clear and standard
 
     // Split text into chunks of max 1000 chars (leaving margin for 1024 limit)
     const chunks = this.splitTextIntoChunks(text, 1000);
@@ -276,30 +270,86 @@ export class VoiceoverService {
   }
 
   /**
-   * Generate a placeholder audio buffer (fallback when TTS unavailable)
-   * Creates a minimal valid MP3 file (silent) with duration matching the text
+   * Generate placeholder audio when TTS is unavailable
+   * Uses ffmpeg to create a proper silent MP3 file (not corrupt raw bytes)
+   * This ensures the video always has an audio track for proper playback
    */
-  private generatePlaceholder(text: string, _language: string, speed: number): Buffer {
-    const durationSeconds = this.estimateDuration(text, _language, speed);
+  private async generatePlaceholderAudio(text: string, language: string, speed: number): Promise<Buffer> {
+    const durationSeconds = this.estimateDuration(text, language, speed);
 
-    // Minimal valid MP3 frame header (MPEG1, Layer 3, 128kbps, 44100Hz)
-    const frameDuration = 0.026;
-    const frameCount = Math.ceil(durationSeconds / frameDuration);
+    const tempDir = path.join(UPLOAD_DIR, `tts-placeholder-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
 
-    const mp3Header = Buffer.from([
-      0xFF, 0xFB, 0x90, 0x00,
-      0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00,
-    ]);
+    try {
+      const outputPath = path.join(tempDir, 'silence.mp3');
 
-    const frames = Buffer.alloc(mp3Header.length * frameCount);
-    for (let i = 0; i < frameCount; i++) {
-      mp3Header.copy(frames, i * mp3Header.length);
+      // Use ffmpeg to generate proper silent MP3 via lavfi anullsrc
+      // This creates a valid, non-corrupt audio file
+      await execFileAsync('ffmpeg', [
+        '-f', 'lavfi',
+        '-i', `anullsrc=r=44100:cl=stereo`,
+        '-t', durationSeconds.toString(),
+        '-c:a', 'libmp3lame',
+        '-b:a', '128k',
+        '-y',
+        outputPath,
+      ], { timeout: 30000 });
+
+      const audioBuffer = await readFile(outputPath);
+      console.log(`[VoiceoverService] Generated ${durationSeconds}s silent placeholder audio via ffmpeg (${audioBuffer.length} bytes)`);
+      return audioBuffer;
+    } catch (error) {
+      // ffmpeg not available — create a minimal valid WAV file programmatically
+      console.warn('[VoiceoverService] ffmpeg silent audio generation failed, creating WAV programmatically:', error instanceof Error ? error.message : error);
+      return this.generateMinimalSilentWav(durationSeconds);
+    } finally {
+      try {
+        const { rm } = await import('fs/promises');
+        await rm(tempDir, { recursive: true, force: true });
+      } catch {
+        // Ignore
+      }
     }
+  }
 
-    console.log(`[VoiceoverService] Generated ${durationSeconds}s placeholder audio (${frameCount} frames)`);
-    return frames;
+  /**
+   * Generate a minimal valid WAV file with silence programmatically
+   * This is the absolute last resort when ffmpeg is not available
+   * Produces a valid WAV with proper headers that any player can decode
+   */
+  private generateMinimalSilentWav(durationSeconds: number): Buffer {
+    const sampleRate = 44100;
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const numSamples = sampleRate * durationSeconds;
+    const dataSize = numSamples * numChannels * (bitsPerSample / 8);
+
+    // WAV file structure: RIFF header + fmt chunk + data chunk
+    const headerSize = 44;
+    const buffer = Buffer.alloc(headerSize + dataSize);
+
+    // RIFF header
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + dataSize, 4); // File size - 8
+    buffer.write('WAVE', 8);
+
+    // fmt sub-chunk
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16); // Sub-chunk size
+    buffer.writeUInt16LE(1, 20); // Audio format (PCM)
+    buffer.writeUInt16LE(numChannels, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(sampleRate * numChannels * (bitsPerSample / 8), 28); // Byte rate
+    buffer.writeUInt16LE(numChannels * (bitsPerSample / 8), 32); // Block align
+    buffer.writeUInt16LE(bitsPerSample, 34);
+
+    // data sub-chunk
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(dataSize, 40);
+    // Data is all zeros (silence) - Buffer.alloc already fills with 0
+
+    console.log(`[VoiceoverService] Generated ${durationSeconds}s silent WAV programmatically (${buffer.length} bytes)`);
+    return buffer;
   }
 
   /**
@@ -323,7 +373,7 @@ export class VoiceoverService {
     const wordCount = text.split(/\s+/).length;
     const wordsPerMinute = language === 'ar' ? 120 : 150;
     const durationMinutes = wordCount / (wordsPerMinute * speed);
-    return Math.ceil(durationMinutes * 60);
+    return Math.max(5, Math.ceil(durationMinutes * 60)); // Minimum 5 seconds
   }
 }
 
