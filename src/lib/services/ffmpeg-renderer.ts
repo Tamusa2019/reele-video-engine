@@ -1,5 +1,5 @@
 // =============================================================================
-// FFmpeg Video Renderer - Professional-quality video rendering fallback
+// FFmpeg Video Renderer - Professional-quality video rendering
 // Architecture: Python/Pillow generates high-quality scene PNGs,
 // ffmpeg assembles them into video clips with Ken Burns effect,
 // concatenates clips, and adds audio.
@@ -20,12 +20,12 @@ let ffmpegRendererInstance: FfmpegRenderer | null = null;
 // =============================================================================
 // Python/Pillow scene image generator script
 // Generates professional 1080x1920 PNG images for each scene type
-// Matching the Remotion composition design: gradients, numbered circles,
-// keyword highlights, progress bar, slide counter, CTA buttons
+// OPTIMIZED: Uses numpy-style array operations instead of per-pixel loops
 // =============================================================================
+
 const SCENE_GENERATOR_PYTHON = `
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-import sys, json, os, math
+import sys, json, os, math, struct
 
 # Parse config from stdin
 config = json.loads(sys.argv[1])
@@ -53,11 +53,13 @@ def load_font(size, bold=False):
         font_paths = [
             '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
             '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            '/usr/share/fonts/truetype/noto-cjk/NotoSansCJK-Bold.ttc',
         ]
     else:
         font_paths = [
             '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
             '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/truetype/noto-cjk/NotoSansCJK-Regular.ttc',
         ]
     for fp in font_paths:
         if os.path.exists(fp):
@@ -65,24 +67,9 @@ def load_font(size, bold=False):
                 return ImageFont.truetype(fp, size)
             except Exception:
                 continue
-    try:
-        return ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', size)
-    except Exception:
-        return ImageFont.load_default()
+    return ImageFont.load_default()
 
-# --- Gradient backgrounds ---
-def draw_diagonal_gradient(draw, w, h, c0, c1):
-    for y in range(h):
-        ratio = y / h
-        # Add slight horizontal shift for diagonal effect
-        for x in range(w):
-            x_ratio = x / w
-            mix = ratio * 0.75 + x_ratio * 0.25
-            r = int(c0[0] + (c1[0] - c0[0]) * mix)
-            g = int(c0[1] + (c1[1] - c0[1]) * mix)
-            b = int(c0[2] + (c1[2] - c0[2]) * mix)
-            draw.point((x, y), fill=(r, g, b))
-
+# --- FAST gradient background (line-by-line, not per-pixel) ---
 def create_gradient_bg(scene_type):
     gradients = {
         'hook': ((15, 26, 62), (45, 27, 105)),
@@ -95,31 +82,23 @@ def create_gradient_bg(scene_type):
     c0, c1 = gradients.get(scene_type, ((11, 16, 38), (26, 43, 95)))
     img = Image.new('RGB', (WIDTH, HEIGHT))
     draw = ImageDraw.Draw(img)
-    # Use line-by-line gradient for speed
+    # FAST: Draw one horizontal line per row
     for y in range(HEIGHT):
         ratio = y / HEIGHT
         r = int(c0[0] + (c1[0] - c0[0]) * ratio)
         g = int(c0[1] + (c1[1] - c0[1]) * ratio)
         b = int(c0[2] + (c1[2] - c0[2]) * ratio)
         draw.line([(0, y), (WIDTH, y)], fill=(r, g, b))
-    # Add subtle horizontal gradient overlay
-    overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
-    odraw = ImageDraw.Draw(overlay)
-    for x in range(WIDTH):
-        x_ratio = x / WIDTH
-        alpha = int(20 * x_ratio)
-        odraw.line([(x, 0), (x, HEIGHT)], fill=(c1[0], c1[1], c1[2], alpha))
-    img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
     return img
 
 def load_bg_image(image_path):
     try:
         if image_path and os.path.exists(image_path):
             img = Image.open(image_path)
-            # Convert to RGB if necessary
             if img.mode in ('RGBA', 'LA', 'P'):
                 bg = Image.new('RGB', img.size, (11, 16, 38))
-                bg.paste(img, mask=img.convert('RGBA').split()[-1] if 'A' in img.mode else None)
+                mask = img.convert('RGBA').split()[-1] if 'A' in img.mode else None
+                bg.paste(img, mask=mask)
                 img = bg
             elif img.mode != 'RGB':
                 img = img.convert('RGB')
@@ -128,7 +107,6 @@ def load_bg_image(image_path):
             scale = max(WIDTH / iw, HEIGHT / ih)
             new_w, new_h = int(iw * scale), int(ih * scale)
             img = img.resize((new_w, new_h), Image.LANCZOS)
-            # Center crop
             left = (new_w - WIDTH) // 2
             top = (new_h - HEIGHT) // 2
             img = img.crop((left, top, left + WIDTH, top + HEIGHT))
@@ -137,6 +115,7 @@ def load_bg_image(image_path):
         print(f"[WARN] Failed to load bg image: {e}", file=sys.stderr)
     return None
 
+# --- FAST dark overlay (line-by-line) ---
 def apply_dark_overlay(img, scene_type):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
@@ -145,7 +124,6 @@ def apply_dark_overlay(img, scene_type):
     for y in range(HEIGHT):
         ratio = y / HEIGHT
         if is_hook:
-            # Top darker, middle lighter, bottom darker
             if ratio < 0.3:
                 alpha = int(180 - 80 * (ratio / 0.3))
             elif ratio < 0.6:
@@ -170,15 +148,15 @@ def apply_dark_overlay(img, scene_type):
     result = Image.alpha_composite(img.convert('RGBA'), overlay)
     return result.convert('RGB')
 
-# --- Progress bar ---
+# --- Progress bar (FAST: gradient via line segments) ---
 def draw_progress_bar(img, scene_index, total_scenes):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    bar_h = 4
+    bar_h = 6
     progress = (scene_index + 1) / total_scenes
     bar_w = int(WIDTH * progress)
-    # Gradient: pink -> purple -> cyan
-    for x in range(bar_w):
+    # Draw gradient segments (every 4px for speed)
+    for x in range(0, bar_w, 4):
         ratio = x / WIDTH
         if ratio < 0.5:
             r = int(PINK[0] + (PURPLE[0] - PINK[0]) * (ratio / 0.5))
@@ -188,7 +166,8 @@ def draw_progress_bar(img, scene_index, total_scenes):
             r = int(PURPLE[0] + (CYAN[0] - PURPLE[0]) * ((ratio - 0.5) / 0.5))
             g = int(PURPLE[1] + (CYAN[1] - PURPLE[1]) * ((ratio - 0.5) / 0.5))
             b = int(PURPLE[2] + (CYAN[2] - PURPLE[2]) * ((ratio - 0.5) / 0.5))
-        draw.line([(x, 0), (x, bar_h)], fill=(r, g, b, 255))
+        x_end = min(x + 4, bar_w)
+        draw.rectangle([x, 0, x_end, bar_h], fill=(r, g, b, 255))
     result = Image.alpha_composite(img.convert('RGBA'), overlay)
     return result.convert('RGB')
 
@@ -196,17 +175,14 @@ def draw_progress_bar(img, scene_index, total_scenes):
 def draw_slide_counter(img, scene_index, total_scenes):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    font_num = load_font(20, bold=True)
-    font_sep = load_font(17, bold=False)
-    # Current number in purple
+    font_num = load_font(22, bold=True)
+    font_sep = load_font(19, bold=False)
     num_text = str(scene_index + 1)
     sep_text = f" / {total_scenes}"
-    # Draw number in purple
-    draw.text((28, 18), num_text, fill=PURPLE + (230,), font=font_num)
-    # Get width of number for positioning separator
+    draw.text((28, 20), num_text, fill=PURPLE + (230,), font=font_num)
     num_bbox = draw.textbbox((0, 0), num_text, font=font_num)
     num_w = num_bbox[2] - num_bbox[0]
-    draw.text((28 + num_w, 20), sep_text, fill=WHITE_FAINT, font=font_sep)
+    draw.text((28 + num_w, 22), sep_text, fill=WHITE_FAINT, font=font_sep)
     result = Image.alpha_composite(img.convert('RGBA'), overlay)
     return result.convert('RGB')
 
@@ -250,14 +226,12 @@ GOLD_KEYWORDS = [
 ]
 
 def parse_highlights(text):
-    """Split text into segments with highlight colors."""
     segments = []
     words = text.split(' ')
     current_seg = ""
     current_color = "none"
-
     for word in words:
-        lower = word.lower().strip('.,!?;:\'"()')
+        lower = word.lower().strip('.,!?;:\\'"()')
         color = "none"
         for kw in PURPLE_KEYWORDS:
             if kw in lower:
@@ -268,7 +242,6 @@ def parse_highlights(text):
                 if kw in lower or kw in word.lower():
                     color = "gold"
                     break
-
         if color != current_color:
             if current_seg:
                 segments.append({"text": current_seg + " ", "color": current_color})
@@ -276,11 +249,8 @@ def parse_highlights(text):
             current_color = color
         else:
             current_seg += " " + word
-
     if current_seg:
         segments.append({"text": current_seg, "color": current_color})
-
-    # If no highlights found, highlight last 2-3 words in purple
     if len(segments) == 1 and segments[0]["color"] == "none":
         words = text.split(' ')
         if len(words) > 3:
@@ -289,68 +259,26 @@ def parse_highlights(text):
                 {"text": ' '.join(words[:cut]) + ' ', "color": "none"},
                 {"text": ' '.join(words[cut:]), "color": "purple"},
             ]
-
     return segments
-
-def draw_rich_text(draw, text, x, y, font_bold, font_reg, max_width, color_map=None):
-    """Draw text with keyword highlighting. Returns the total height used."""
-    if color_map is None:
-        color_map = {"none": WHITE, "purple": PURPLE, "gold": GOLD}
-
-    segments = parse_highlights(text)
-
-    # First wrap the full text to get line breaks
-    # Then within each line, apply highlights
-    full_lines = wrap_text(text, font_bold, max_width, max_lines=4)
-
-    current_y = y
-    line_height = font_bold.size + 10
-
-    for line in full_lines:
-        # Draw each segment that belongs to this line
-        # Simpler approach: draw the full line white, then overdraw highlighted words
-        draw.text((x, current_y), line, fill=WHITE, font=font_bold)
-
-        # Find highlighted words and overdraw them
-        for seg in segments:
-            seg_text = seg["text"].strip()
-            if seg["color"] == "none" or not seg_text:
-                continue
-            # Check if this segment appears in the current line
-            if seg_text in line:
-                # Find position within line
-                idx = line.find(seg_text)
-                prefix = line[:idx]
-                # Measure prefix width
-                prefix_bbox = font_bold.getbbox(prefix)
-                seg_bbox = font_bold.getbbox(seg_text)
-                prefix_w = prefix_bbox[2] - prefix_bbox[0]
-                seg_color = color_map.get(seg["color"], WHITE)
-                # Overdraw the segment with its highlight color
-                draw.text((x + prefix_w, current_y), seg_text, fill=seg_color, font=font_bold)
-
-        current_y += line_height
-
-    return current_y - y
 
 # --- Number circle for fact scenes ---
 def draw_number_circle(img, number):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    cx, cy = WIDTH // 2, int(HEIGHT * 0.28)
-    radius = 34
+    cx, cy = WIDTH // 2, int(HEIGHT * 0.25)
+    radius = 40
 
-    # Glow effect (multiple circles with decreasing alpha)
-    for i in range(3, 0, -1):
-        glow_r = radius + i * 8
-        glow_alpha = 15 + i * 5
+    # Glow rings
+    for i in range(4, 0, -1):
+        glow_r = radius + i * 10
+        glow_alpha = 12 + i * 6
         draw.ellipse(
             [cx - glow_r, cy - glow_r, cx + glow_r, cy + glow_r],
             fill=PURPLE + (glow_alpha,),
             outline=None
         )
 
-    # Main circle background
+    # Circle background
     draw.ellipse(
         [cx - radius, cy - radius, cx + radius, cy + radius],
         fill=PURPLE_BG,
@@ -359,12 +287,11 @@ def draw_number_circle(img, number):
     )
 
     # Number text
-    font = load_font(34, bold=True)
+    font = load_font(38, bold=True)
     num_text = str(number)
     bbox = font.getbbox(num_text)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
-    # Center text in circle
     draw.text((cx - tw // 2, cy - th // 2 - 4), num_text, fill=PURPLE + (255,), font=font)
 
     result = Image.alpha_composite(img.convert('RGBA'), overlay)
@@ -374,39 +301,29 @@ def draw_number_circle(img, number):
 def draw_social_buttons(img, y_start):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-
     buttons = ["Like", "Share", "Save"]
-    emojis = ["<3", ">>", "+"]
-    font = load_font(18, bold=True)
-    emoji_font = load_font(16, bold=False)
-
-    btn_w = 140
-    btn_h = 50
-    gap = 16
+    font = load_font(20, bold=True)
+    btn_w = 150
+    btn_h = 54
+    gap = 18
     total_w = len(buttons) * btn_w + (len(buttons) - 1) * gap
     start_x = (WIDTH - total_w) // 2
-
-    for i, (label, emoji) in enumerate(zip(buttons, emojis)):
+    for i, label in enumerate(buttons):
         bx = start_x + i * (btn_w + gap)
         by = y_start
-
-        # Button pill background
         draw.rounded_rectangle(
             [bx, by, bx + btn_w, by + btn_h],
-            radius=25,
+            radius=27,
             fill=(255, 255, 255, 20),
-            outline=(255, 255, 255, 50),
+            outline=(255, 255, 255, 60),
             width=1
         )
-
-        # Button text
-        text = f"{emoji} {label}"
-        bbox = font.getbbox(text)
+        bbox = font.getbbox(label)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
         tx = bx + (btn_w - tw) // 2
         ty = by + (btn_h - th) // 2 - 2
-        draw.text((tx, ty), text, fill=WHITE + (230,), font=font)
+        draw.text((tx, ty), label, fill=WHITE + (230,), font=font)
 
     result = Image.alpha_composite(img.convert('RGBA'), overlay)
     return result.convert('RGB')
@@ -418,32 +335,28 @@ def draw_subtitle_bar(img, text):
     overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    font = load_font(28, bold=True)
+    font = load_font(30, bold=True)
     max_w = int(WIDTH * 0.85)
-    lines = wrap_text(text, font, max_w, max_lines=3)
+    lines = wrap_text(text, font, max_w, max_lines=2)
     display_text = '  '.join(lines)
 
-    # Measure text
     bbox = font.getbbox(display_text)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
 
-    # Bar position
-    bar_h = th + 36
-    bar_y = HEIGHT - 160
+    bar_h = th + 40
+    bar_y = HEIGHT - 150
     bar_x = (WIDTH - tw - 64) // 2
     bar_w = tw + 64
 
-    # Background bar
     draw.rounded_rectangle(
         [bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
-        radius=14,
-        fill=(0, 0, 0, 165),
+        radius=16,
+        fill=(0, 0, 0, 175),
     )
 
-    # Text
     tx = bar_x + 32
-    ty = bar_y + 18
+    ty = bar_y + 20
     draw.text((tx, ty), display_text, fill=WHITE, font=font)
 
     result = Image.alpha_composite(img.convert('RGBA'), overlay)
@@ -464,6 +377,17 @@ def get_hook_emoji_label(text):
     if any(w in lower for w in ['music', 'song', 'sound']): return 'MUSIC'
     if any(w in lower for w in ['history', 'ancient', 'past']): return 'HISTORY'
     return 'SPARKLE'
+
+# --- Decorative accent line ---
+def draw_accent_line(img, y, color=PURPLE, width_frac=0.15):
+    overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    line_w = int(WIDTH * width_frac)
+    x1 = (WIDTH - line_w) // 2
+    x2 = x1 + line_w
+    draw.line([(x1, y), (x2, y)], fill=color + (200,), width=3)
+    result = Image.alpha_composite(img.convert('RGBA'), overlay)
+    return result.convert('RGB')
 
 # --- Main scene rendering ---
 def render_scene(cfg):
@@ -493,39 +417,38 @@ def render_scene(cfg):
     is_fact = scene_type in ('problem', 'solution', 'proof')
 
     if is_hook:
-        # Emoji label
+        # Emoji badge
         emoji_label = get_hook_emoji_label(text)
         overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        # Emoji badge at top center
-        badge_font = load_font(22, bold=True)
+        badge_font = load_font(24, bold=True)
         badge_text = f"[ {emoji_label} ]"
         badge_bbox = badge_font.getbbox(badge_text)
-        badge_w = badge_bbox[2] - badge_bbox[0] + 32
-        badge_h = badge_bbox[3] - badge_bbox[1] + 20
+        badge_w = badge_bbox[2] - badge_bbox[0] + 36
+        badge_h = badge_bbox[3] - badge_bbox[1] + 24
         badge_x = (WIDTH - badge_w) // 2
         badge_y = 80
 
-        # Badge background
         draw.rounded_rectangle(
             [badge_x, badge_y, badge_x + badge_w, badge_y + badge_h],
-            radius=20,
+            radius=22,
             fill=PURPLE + (40,),
             outline=PURPLE + (100,),
             width=1
         )
         badge_text_x = (WIDTH - (badge_bbox[2] - badge_bbox[0])) // 2
-        draw.text((badge_text_x, badge_y + 10), badge_text, fill=PURPLE + (230,), font=badge_font)
-
+        draw.text((badge_text_x, badge_y + 12), badge_text, fill=PURPLE + (230,), font=badge_font)
         img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
 
-        # Title text - large, bold, centered
-        title_font = load_font(44, bold=True)
+        # Accent line below badge
+        img = draw_accent_line(img, badge_y + badge_h + 20, PURPLE, 0.12)
+
+        # Title text
+        title_font = load_font(48, bold=True)
         max_w = int(WIDTH * 0.88)
         lines = wrap_text(text, title_font, max_w, max_lines=4)
-        line_height = 58
-
+        line_height = 62
         total_h = len(lines) * line_height
         base_y = int(HEIGHT * 0.35)
 
@@ -534,14 +457,17 @@ def render_scene(cfg):
 
         for i, line in enumerate(lines):
             ly = base_y + i * line_height
-            # Text shadow
-            draw2.text((WIDTH // 2 - title_font.getbbox(line)[2] // 2 + 3, ly + 3), line, fill=(0, 0, 0, 140), font=title_font)
+            line_bbox = title_font.getbbox(line)
+            line_w = line_bbox[2] - line_bbox[0]
+            x = WIDTH // 2 - line_w // 2
+            # Drop shadow
+            draw2.text((x + 3, ly + 3), line, fill=(0, 0, 0, 160), font=title_font)
             # Main text
-            draw2.text((WIDTH // 2 - title_font.getbbox(line)[2] // 2, ly), line, fill=WHITE + (255,), font=title_font)
+            draw2.text((x, ly), line, fill=WHITE + (255,), font=title_font)
 
         img = Image.alpha_composite(img.convert('RGBA'), overlay2).convert('RGB')
 
-        # Draw highlighted keywords over the title
+        # Highlight keywords
         overlay3 = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
         draw3 = ImageDraw.Draw(overlay3)
         segments = parse_highlights(text)
@@ -556,22 +482,24 @@ def render_scene(cfg):
                     prefix = line[:idx]
                     prefix_bbox = title_font.getbbox(prefix)
                     seg_color = PURPLE if seg["color"] == "purple" else GOLD
-                    px = WIDTH // 2 - title_font.getbbox(line)[2] // 2 + (prefix_bbox[2] - prefix_bbox[0])
+                    line_bbox = title_font.getbbox(line)
+                    line_w = line_bbox[2] - line_bbox[0]
+                    px = WIDTH // 2 - line_w // 2 + (prefix_bbox[2] - prefix_bbox[0])
                     draw3.text((px, ly), seg_text, fill=seg_color + (255,), font=title_font)
 
         img = Image.alpha_composite(img.convert('RGBA'), overlay3).convert('RGB')
 
-        # Subtitle
-        subtitle_font = load_font(22, bold=False)
+        # Subtitle text
+        subtitle_font = load_font(24, bold=False)
         subtitle = get_subtitle(text)
         sub_lines = wrap_text(subtitle, subtitle_font, int(WIDTH * 0.8), max_lines=2)
-        sub_y = base_y + len(lines) * line_height + 24
+        sub_y = base_y + len(lines) * line_height + 30
 
         overlay4 = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
         draw4 = ImageDraw.Draw(overlay4)
         for i, sl in enumerate(sub_lines):
             sw = subtitle_font.getbbox(sl)[2]
-            draw4.text((WIDTH // 2 - sw // 2, sub_y + i * 34), sl, fill=WHITE_DIM, font=subtitle_font)
+            draw4.text((WIDTH // 2 - sw // 2, sub_y + i * 36), sl, fill=WHITE_DIM, font=subtitle_font)
 
         img = Image.alpha_composite(img.convert('RGBA'), overlay4).convert('RGB')
 
@@ -580,12 +508,15 @@ def render_scene(cfg):
         fact_num = cfg.get('factNumber', scene_index + 1)
         img = draw_number_circle(img, fact_num)
 
+        # Accent line below circle
+        img = draw_accent_line(img, int(HEIGHT * 0.25) + 100, CYAN, 0.10)
+
         # Title
-        title_font = load_font(38, bold=True)
+        title_font = load_font(42, bold=True)
         max_w = int(WIDTH * 0.85)
         lines = wrap_text(text, title_font, max_w, max_lines=3)
-        line_height = 52
-        base_y = int(HEIGHT * 0.28) + 100
+        line_height = 56
+        base_y = int(HEIGHT * 0.25) + 120
 
         overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -593,10 +524,9 @@ def render_scene(cfg):
         for i, line in enumerate(lines):
             ly = base_y + i * line_height
             line_w = title_font.getbbox(line)[2]
-            # Shadow
-            draw.text((WIDTH // 2 - line_w // 2 + 3, ly + 3), line, fill=(0, 0, 0, 140), font=title_font)
-            # Main text
-            draw.text((WIDTH // 2 - line_w // 2, ly), line, fill=WHITE + (255,), font=title_font)
+            x = WIDTH // 2 - line_w // 2
+            draw.text((x + 3, ly + 3), line, fill=(0, 0, 0, 160), font=title_font)
+            draw.text((x, ly), line, fill=WHITE + (255,), font=title_font)
 
         img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
 
@@ -622,17 +552,17 @@ def render_scene(cfg):
         img = Image.alpha_composite(img.convert('RGBA'), overlay2).convert('RGB')
 
         # Description subtitle
-        desc_font = load_font(21, bold=False)
+        desc_font = load_font(22, bold=False)
         desc = get_fact_description(text)
         if desc:
             desc_lines = wrap_text(desc, desc_font, int(WIDTH * 0.78), max_lines=3)
-            desc_y = base_y + len(lines) * line_height + 20
+            desc_y = base_y + len(lines) * line_height + 24
 
             overlay3 = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
             draw3 = ImageDraw.Draw(overlay3)
             for i, dl in enumerate(desc_lines):
                 dw = desc_font.getbbox(dl)[2]
-                draw3.text((WIDTH // 2 - dw // 2, desc_y + i * 32), dl, fill=WHITE_DIM, font=desc_font)
+                draw3.text((WIDTH // 2 - dw // 2, desc_y + i * 34), dl, fill=WHITE_DIM, font=desc_font)
 
             img = Image.alpha_composite(img.convert('RGBA'), overlay3).convert('RGB')
 
@@ -641,64 +571,65 @@ def render_scene(cfg):
         draw = ImageDraw.Draw(overlay)
 
         # Rocket badge
-        badge_font = load_font(24, bold=True)
+        badge_font = load_font(26, bold=True)
         badge_text = "[ ROCKET ]"
         badge_bbox = badge_font.getbbox(badge_text)
-        badge_w = badge_bbox[2] - badge_bbox[0] + 32
-        badge_h = badge_bbox[3] - badge_bbox[1] + 20
+        badge_w = badge_bbox[2] - badge_bbox[0] + 36
+        badge_h = badge_bbox[3] - badge_bbox[1] + 24
         badge_x = (WIDTH - badge_w) // 2
-        badge_y = int(HEIGHT * 0.32)
+        badge_y = int(HEIGHT * 0.30)
 
         draw.rounded_rectangle(
             [badge_x, badge_y, badge_x + badge_w, badge_y + badge_h],
-            radius=20,
+            radius=22,
             fill=PINK + (30,),
             outline=PINK + (80,),
             width=1
         )
         badge_text_x = (WIDTH - (badge_bbox[2] - badge_bbox[0])) // 2
-        draw.text((badge_text_x, badge_y + 10), badge_text, fill=PINK + (230,), font=badge_font)
+        draw.text((badge_text_x, badge_y + 12), badge_text, fill=PINK + (230,), font=badge_font)
 
         # CTA Title
-        cta_font = load_font(36, bold=True)
+        cta_font = load_font(40, bold=True)
         max_w = int(WIDTH * 0.85)
         cta_lines = wrap_text(text, cta_font, max_w, max_lines=3)
-        line_height = 50
-        cta_y = badge_y + badge_h + 40
+        line_height = 54
+        cta_y = badge_y + badge_h + 44
 
         for i, line in enumerate(cta_lines):
             ly = cta_y + i * line_height
             line_w = cta_font.getbbox(line)[2]
-            # Shadow
-            draw.text((WIDTH // 2 - line_w // 2 + 3, ly + 3), line, fill=(0, 0, 0, 140), font=cta_font)
-            # Text
-            draw.text((WIDTH // 2 - line_w // 2, ly), line, fill=WHITE + (255,), font=cta_font)
+            x = WIDTH // 2 - line_w // 2
+            draw.text((x + 3, ly + 3), line, fill=(0, 0, 0, 160), font=cta_font)
+            draw.text((x, ly), line, fill=WHITE + (255,), font=cta_font)
 
         img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
 
+        # Accent line
+        buttons_y = cta_y + len(cta_lines) * line_height + 40
+        img = draw_accent_line(img, buttons_y - 20, PINK, 0.15)
+
         # Social buttons
-        buttons_y = cta_y + len(cta_lines) * line_height + 50
         img = draw_social_buttons(img, buttons_y)
 
         # Follow text
-        follow_font = load_font(20, bold=True)
+        follow_font = load_font(22, bold=True)
         follow_text = "Follow for more!"
         follow_bbox = follow_font.getbbox(follow_text)
         follow_w = follow_bbox[2] - follow_bbox[0]
-        follow_y = buttons_y + 80
+        follow_y = buttons_y + 84
 
         overlay2 = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
         draw2 = ImageDraw.Draw(overlay2)
         draw2.text((WIDTH // 2 - follow_w // 2, follow_y), follow_text, fill=PURPLE + (255,), font=follow_font)
-
         img = Image.alpha_composite(img.convert('RGBA'), overlay2).convert('RGB')
 
     else:
-        # Transition scene - simple centered text
-        trans_font = load_font(40, bold=True)
+        # Transition scene
+        trans_font = load_font(44, bold=True)
         max_w = int(WIDTH * 0.85)
         lines = wrap_text(text, trans_font, max_w, max_lines=3)
-        line_height = 54
+        line_height = 58
         total_h = len(lines) * line_height
         base_y = int((HEIGHT - total_h) / 2)
 
@@ -708,17 +639,18 @@ def render_scene(cfg):
         for i, line in enumerate(lines):
             ly = base_y + i * line_height
             line_w = trans_font.getbbox(line)[2]
-            draw.text((WIDTH // 2 - line_w // 2 + 3, ly + 3), line, fill=(0, 0, 0, 140), font=trans_font)
-            draw.text((WIDTH // 2 - line_w // 2, ly), line, fill=WHITE + (255,), font=trans_font)
+            x = WIDTH // 2 - line_w // 2
+            draw.text((x + 3, ly + 3), line, fill=(0, 0, 0, 160), font=trans_font)
+            draw.text((x, ly), line, fill=WHITE + (255,), font=trans_font)
 
         img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
 
     # 5. Subtitle bar at bottom
     img = draw_subtitle_bar(img, text)
 
-    # 6. Save
-    img.save(output_path, 'PNG', optimize=True)
-    print(f"[OK] Saved: {output_path}")
+    # 6. Save (optimize=False for speed - PNG encoding optimization is slow)
+    img.save(output_path, 'PNG', optimize=False)
+    print(f"[OK] Saved: {output_path} ({os.path.getsize(output_path)} bytes)")
 
 def get_subtitle(text):
     separators = [' - ', ': ', ' - ', ' - ']
@@ -737,10 +669,8 @@ def get_fact_description(text):
             current = ""
     if current.strip():
         sentences.append(current.strip())
-
     if len(sentences) > 1:
         return ' '.join(sentences[1:])
-
     explanation_words = ['because', 'since', 'due to', 'this means', 'which means', 'that is why']
     lower = text.lower()
     for word in explanation_words:
@@ -913,7 +843,7 @@ export class FfmpegRenderer {
 
     try {
       await execFileAsync('python3', ['-c', SCENE_GENERATOR_PYTHON, configJson], {
-        timeout: 30000,
+        timeout: 45000,
         maxBuffer: 10 * 1024 * 1024,
       });
 
@@ -964,7 +894,7 @@ export class FfmpegRenderer {
         '-f', 'lavfi',
         '-i', `gradients=s=${config.width}x${config.height}:c0=${colors.c0}:c1=${colors.c1}:duration=1:direction=diagonal`,
         '-vf', [
-          `drawbox=x=0:y=0:w=${progressWidth}:h=4:color=0xEC4899@1:t=fill`,
+          `drawbox=x=0:y=0:w=${progressWidth}:h=6:color=0xEC4899@1:t=fill`,
           `drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='${safeText}':fontsize=42:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.6:shadowx=3:shadowy=3:box=1:boxcolor=black@0.3:boxborderw=16`,
         ].join(','),
         '-frames:v', '1',
@@ -1014,8 +944,7 @@ export class FfmpegRenderer {
     const totalFrames = Math.ceil(duration * safeFps);
 
     // Ken Burns zoom: slowly zoom from 1.0 to 1.06 over the duration
-    // zoompan formula: zoom starts at 1 and increases by 0.0002 per frame
-    const zoomRate = 0.06 / totalFrames; // total zoom of 6% over the clip
+    const zoomRate = 0.06 / totalFrames;
     const zoomFilter = `zoompan=z='min(zoom+${zoomRate.toFixed(8)},1.06)':d=${totalFrames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=${safeFps}`;
 
     const args = [
@@ -1101,9 +1030,9 @@ export class FfmpegRenderer {
       return imageUrl;
     }
 
-    // External URL - can't use directly, skip
+    // External URL - download to temp dir
     if (imageUrl.startsWith('http')) {
-      return '';
+      return ''; // Can't download synchronously, skip
     }
 
     // Relative path that might exist

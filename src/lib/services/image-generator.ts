@@ -103,7 +103,7 @@ export class ImageGenerationService {
         '-p', prompt,
         '-o', outputPath,
         '-s', size,
-      ], { timeout: 60000 });
+      ], { timeout: 90000 }); // 90s timeout for AI image generation
 
       // Verify the output file exists and is valid
       if (existsSync(outputPath)) {
@@ -143,7 +143,7 @@ export class ImageGenerationService {
     console.log('[ImageGen] Fetching from Pollinations.ai...');
 
     const response = await fetch(imageUrl, {
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(45000), // 45s timeout
     });
 
     if (!response.ok) {
@@ -185,7 +185,7 @@ export class ImageGenerationService {
 
         // Delay between requests to respect rate limits
         if (i < scenes.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
       } catch (error) {
         console.warn(`[ImageGen] Failed to generate image for scene ${i} (${scene.type}):`, error instanceof Error ? error.message : error);
