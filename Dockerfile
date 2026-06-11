@@ -3,11 +3,10 @@ FROM python:3.11-slim
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    fonts-dejavu \
     fonts-noto \
     fonts-noto-cjk \
     fonts-freefont-ttf \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -31,9 +30,9 @@ ENV PORT=7860
 # Expose port
 EXPOSE 7860
 
-# Health check
+# Health check (use python since curl isn't available in slim)
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD curl -f http://localhost:7860/api/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/api/health')" || exit 1
 
 # Run the application
 CMD ["python", "app.py"]
