@@ -39,9 +39,10 @@ export async function POST(request: NextRequest) {
     const validated = generateVideoSchema.parse(body);
     const userId = await getDefaultUserId();
 
-    // Check credits (full pipeline: 3 + 2 + 5 = 10 credits)
+    // Check credits (skip if CREDITS_DISABLED=true for testing)
+    const CREDITS_DISABLED = process.env.CREDITS_DISABLED === 'true';
     const user = await db.user.findUnique({ where: { id: userId } });
-    if (!user || user.credits < 10) {
+    if (!CREDITS_DISABLED && (!user || user.credits < 10)) {
       return errorResponse('Insufficient credits. Full video generation requires 10 credits.', 402);
     }
 
@@ -399,11 +400,13 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      // Deduct credits (total: 10)
+      // Deduct credits (skip if CREDITS_DISABLED=true for testing)
+      if (!CREDITS_DISABLED) {
       await db.user.update({
         where: { id: userId },
         data: { credits: { decrement: 10 } },
       });
+      }
 
       // Record usage
       await db.usageRecord.create({

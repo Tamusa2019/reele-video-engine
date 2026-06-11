@@ -244,7 +244,7 @@ export function StepGenerate() {
                 <Coins className="w-5 h-5 text-accent" />
                 <span className="font-medium">Estimated Cost</span>
               </div>
-              <span className="text-lg font-bold text-accent">10 credits</span>
+              <span className="text-lg font-bold text-green-500">Free (Testing)</span>
             </div>
 
             <Button

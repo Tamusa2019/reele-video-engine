@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 
 export async function GET() {
   try {
+    const CREDITS_DISABLED = process.env.CREDITS_DISABLED === 'true';
     const userId = await getDefaultUserId();
 
     const user = await db.user.findUnique({
@@ -23,9 +24,27 @@ export async function GET() {
     });
 
     if (!user) {
+      if (CREDITS_DISABLED) {
+        return successResponse({
+          credits: 99999,
+          plan: 'unlimited',
+          creditsDisabled: true,
+        });
+      }
       return successResponse({
         credits: 0,
         plan: 'free',
+      });
+    }
+
+    if (CREDITS_DISABLED) {
+      return successResponse({
+        ...user,
+        credits: 99999,
+        plan: 'unlimited',
+        creditsDisabled: true,
+        totalCreditsUsed: 0,
+        recentUsage: [],
       });
     }
 

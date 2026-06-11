@@ -269,7 +269,7 @@ export async function seedDefaultUser(): Promise<void> {
         email: 'demo@reele.app',
         name: 'Demo User',
         role: 'user',
-        credits: 50,
+        credits: 9999,
         plan: 'pro',
       },
     });

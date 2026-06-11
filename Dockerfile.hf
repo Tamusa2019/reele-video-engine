@@ -48,6 +48,9 @@ ENV FONT_PATH=/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf
 # Render method: 'auto' (try Remotion, fallback to ffmpeg), 'ffmpeg', or 'remotion'
 ENV RENDER_METHOD=auto
 
+# Disable credits for testing (set to 'false' to re-enable credit checks)
+ENV CREDITS_DISABLED=true
+
 WORKDIR /app
 
 # Copy everything at once
