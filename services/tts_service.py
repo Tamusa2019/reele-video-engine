@@ -1,6 +1,5 @@
 """
 TTS Service - Text-to-speech using Edge-TTS (Microsoft Edge Read-Aloud).
-Free, high-quality, multiple voice options.
 """
 
 import asyncio
@@ -15,21 +14,19 @@ logger = logging.getLogger(__name__)
 
 CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp/reele_cache/tts")
 
-# Voice presets mapping
 VOICE_MAP = {
-    "bella": "en-US-EmmaMultilingualNeural",    # Warm, feminine (default)
-    "adam": "en-US-AndrewNeural",               # Deep, masculine
-    "dolly": "en-US-AnaNeural",                  # Friendly, feminine
-    "george": "en-GB-RyanNeural",               # British, authoritative
-    "nova": "en-US-AvaNeural",                   # Modern, energetic
-    "echo": "en-US-BrianNeural",                 # Strong, confident
+    "bella": "en-US-EmmaMultilingualNeural",
+    "adam": "en-US-AndrewNeural",
+    "dolly": "en-US-AnaNeural",
+    "george": "en-GB-RyanNeural",
+    "nova": "en-US-AvaNeural",
+    "echo": "en-US-BrianNeural",
 }
 
 DEFAULT_VOICE = "bella"
 
 
 def _cache_path(text: str, voice: str) -> str:
-    """Get cached TTS file path."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     key = hashlib.md5(f"{text}:{voice}".encode()).hexdigest()
     return os.path.join(CACHE_DIR, f"{key}.mp3")
@@ -42,13 +39,9 @@ async def synthesize(
     rate: str = "+0%",
     pitch: str = "+0Hz"
 ) -> str:
-    """
-    Synthesize text to speech using Edge-TTS.
-    Returns the path to the generated MP3 file.
-    """
+    """Synthesize text to speech using Edge-TTS."""
     voice = VOICE_MAP.get(voice_key, VOICE_MAP[DEFAULT_VOICE])
 
-    # Check cache
     cache_file = _cache_path(text, voice_key)
     if os.path.exists(cache_file) and os.path.getsize(cache_file) > 1000:
         logger.info(f"TTS cache hit for: {text[:40]}...")
@@ -69,7 +62,6 @@ async def synthesize(
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 500:
             logger.info(f"TTS generated: {output_path} ({os.path.getsize(output_path)} bytes)")
-            # Save to cache
             if output_path != cache_file:
                 import shutil
                 shutil.copy2(output_path, cache_file)
@@ -79,7 +71,6 @@ async def synthesize(
 
     except Exception as e:
         logger.error(f"Edge-TTS failed: {e}")
-        # Fallback: generate silent audio
         return _generate_silent_audio(output_path, duration=3.0)
 
 
@@ -115,7 +106,7 @@ def get_audio_duration(path: str) -> float:
         info = json_mod.loads(result.stdout)
         return float(info.get("format", {}).get("duration", 3.0))
 
-    return 3.0  # Default fallback
+    return 3.0
 
 
 def get_available_voices() -> dict:

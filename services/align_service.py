@@ -9,12 +9,10 @@ from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded whisper model
 _whisper_model = None
 
 
 def _get_whisper_model():
-    """Lazily initialize the whisper model."""
     global _whisper_model
     if _whisper_model is None:
         from faster_whisper import WhisperModel
@@ -29,22 +27,15 @@ def align_words(
     text: str,
     start_offset: float = 0.0
 ) -> List[Dict]:
-    """
-    Align words in text to audio timestamps.
-    Returns list of {word, start, end} dicts.
-
-    Tries faster-whisper first, falls back to linear heuristic.
-    """
+    """Align words in text to audio timestamps."""
     if not os.path.exists(audio_path):
         logger.warning(f"Audio file not found: {audio_path}, using linear alignment")
         return _linear_align(text, 3.0, start_offset)
 
-    # Get audio duration
     duration = _get_audio_duration(audio_path)
     if duration <= 0:
         duration = 3.0
 
-    # Try whisper alignment
     try:
         words = _whisper_align(audio_path, text, start_offset)
         if words and len(words) > 0:
@@ -76,17 +67,12 @@ def _whisper_align(audio_path: str, text: str, start_offset: float) -> Optional[
 
 
 def _linear_align(text: str, duration: float, start_offset: float) -> List[Dict]:
-    """
-    Simple linear word alignment as fallback.
-    Distributes words evenly across the duration.
-    """
-    # Clean and split text
+    """Simple linear word alignment as fallback."""
     import re
     words = re.findall(r'\S+', text)
     if not words:
         return []
 
-    # Add small padding at start and end
     pad_start = 0.3
     pad_end = 0.2
     effective_duration = duration - pad_start - pad_end

@@ -4,51 +4,284 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reele Video Engine v2</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+:root {
+    --bg-dark: #0a0a0f;
+    --bg-card: #12121a;
+    --bg-input: #1a1a28;
+    --accent: #6c5ce7;
+    --accent-glow: rgba(108, 92, 231, 0.3);
+    --accent-2: #00cec9;
+    --text-primary: #e8e8f0;
+    --text-secondary: #8888a0;
+    --border: #2a2a3a;
+    --success: #00b894;
+    --error: #e17055;
+    --warning: #fdcb6e;
+    --radius: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+.header {
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-dark);
+}
+.logo { display: flex; align-items: center; gap: 12px; }
+.logo-icon {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+}
+.logo-text {
+    font-size: 22px; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.logo-badge {
+    font-size: 11px; padding: 2px 8px;
+    background: var(--accent); color: white;
+    border-radius: 20px; font-weight: 600;
+}
+.main-container {
+    max-width: 1400px; margin: 0 auto; padding: 32px;
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 32px; align-items: start;
+}
+.card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px;
+}
+.card-title {
+    font-size: 16px; font-weight: 600; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+}
+.form-group { margin-bottom: 20px; }
+.form-group label {
+    display: block; font-size: 13px; font-weight: 500;
+    color: var(--text-secondary); margin-bottom: 8px;
+}
+.form-group input[type="text"], .form-group input[type="url"] {
+    width: 100%; padding: 12px 16px;
+    background-color: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text-primary);
+    font-size: 14px; font-family: inherit; outline: none;
+    -webkit-text-fill-color: var(--text-primary);
+}
+.form-group input[type="text"]:focus, .form-group input[type="url"]:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.form-group select {
+    width: 100%; padding: 12px 16px;
+    background-color: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text-primary);
+    font-size: 14px; font-family: inherit; outline: none;
+}
+.form-group select option { background: var(--bg-input); color: var(--text-primary); }
+.voice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.voice-option {
+    padding: 10px; background: var(--bg-input);
+    border: 2px solid var(--border); border-radius: 8px;
+    text-align: center; cursor: pointer; font-size: 13px;
+    -webkit-user-select: none; user-select: none;
+}
+.voice-option:hover { border-color: var(--accent); }
+.voice-option.selected {
+    border-color: var(--accent); background: rgba(108, 92, 231, 0.15);
+}
+.voice-name { font-weight: 600; display: block; }
+.voice-desc { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+.toggle-group {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 0;
+}
+.toggle {
+    position: relative; width: 44px; height: 24px;
+    background: var(--border); border-radius: 12px; cursor: pointer;
+}
+.toggle.active { background: var(--accent); }
+.toggle::after {
+    content: ''; position: absolute; top: 3px; left: 3px;
+    width: 18px; height: 18px; background: white;
+    border-radius: 50%; transition: transform 0.3s;
+}
+.toggle.active::after { transform: translateX(20px); }
+.btn-generate {
+    width: 100%; padding: 16px;
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    border: none; border-radius: var(--radius);
+    color: white; font-size: 16px; font-weight: 700;
+    cursor: pointer; margin-top: 16px;
+}
+.btn-generate:disabled { opacity: 0.6; cursor: not-allowed; }
+.progress-section { margin-top: 24px; }
+.progress-bar-container {
+    height: 6px; background: var(--bg-input);
+    border-radius: 3px; overflow: hidden; margin-bottom: 8px;
+}
+.progress-bar {
+    height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    border-radius: 3px; transition: width 0.3s; width: 0%;
+}
+.progress-text { font-size: 13px; color: var(--text-secondary); }
+.video-preview {
+    position: relative; width: 100%; max-width: 360px;
+    margin: 0 auto; aspect-ratio: 9/16;
+    background: var(--bg-input); border-radius: 16px;
+    overflow: hidden; border: 2px solid var(--border);
+}
+.video-preview video { width: 100%; height: 100%; object-fit: cover; }
+.video-placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; color: var(--text-secondary);
+}
+.placeholder-icon { font-size: 48px; opacity: 0.5; }
+.scene-list { display: flex; flex-direction: column; gap: 12px; }
+.scene-item {
+    background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+}
+.scene-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.scene-badge {
+    padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+}
+.scene-badge.hook { background: #e17055; color: white; }
+.scene-badge.fact { background: #0984e3; color: white; }
+.scene-badge.story { background: #6c5ce7; color: white; }
+.scene-badge.insight { background: #00b894; color: white; }
+.scene-badge.cta { background: #e84393; color: white; }
+.scene-number { font-size: 12px; color: var(--text-secondary); }
+.scene-content { display: flex; gap: 12px; align-items: flex-start; }
+.scene-image-placeholder {
+    width: 64px; height: 96px; border-radius: 6px;
+    background: var(--border); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; opacity: 0.5;
+}
+.scene-text-wrap { flex: 1; min-width: 0; }
+.scene-text { font-size: 14px; line-height: 1.5; color: var(--text-primary); }
+.scene-prompt {
+    font-size: 12px; color: var(--text-secondary);
+    margin-top: 8px; font-style: italic;
+}
+.download-section { margin-top: 16px; text-align: center; }
+.btn-download {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 24px; background: var(--success);
+    border: none; border-radius: 8px;
+    color: white; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.status-indicator {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--text-secondary);
+}
+.status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-secondary); display: inline-block;
+}
+.status-dot.ready { background: var(--success); }
+.status-dot.processing { background: var(--warning); }
+.status-dot.error { background: var(--error); }
+.caption-section {
+    margin-top: 16px; background: var(--bg-input);
+    border: 1px solid var(--border); border-radius: 8px; padding: 16px;
+}
+.caption-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+}
+.caption-header h4 {
+    font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+}
+.btn-copy {
+    padding: 6px 12px; background: var(--accent);
+    border: none; border-radius: 6px;
+    color: white; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.btn-copy:hover { background: #8b5cf6; }
+.caption-text {
+    font-size: 14px; line-height: 1.6; color: var(--text-primary);
+    white-space: pre-wrap; word-wrap: break-word;
+}
+.hashtag-list {
+    margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px;
+}
+.hashtag-tag {
+    padding: 3px 10px; background: rgba(108, 92, 231, 0.2);
+    color: var(--accent-2); border-radius: 20px;
+    font-size: 12px; font-weight: 500;
+}
+.logo-upload-area {
+    display: flex; align-items: center; gap: 12px; margin-top: 8px;
+}
+.logo-preview {
+    width: 48px; height: 48px; border-radius: 8px;
+    border: 2px solid var(--border); background: var(--bg-input);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: var(--text-secondary); overflow: hidden;
+}
+.logo-preview img { width: 100%; height: 100%; object-fit: cover; }
+.btn-upload-logo {
+    padding: 8px 16px; background: var(--bg-input);
+    border: 1px dashed var(--border); border-radius: 8px;
+    color: var(--text-secondary); font-size: 13px; cursor: pointer;
+}
+.btn-upload-logo:hover { border-color: var(--accent); color: var(--text-primary); }
+@media (max-width: 900px) {
+    .main-container { grid-template-columns: 1fr; padding: 16px; }
+}
+    </style>
 </head>
 <body>
 
-<!-- Header -->
 <header class="header">
     <div class="logo">
         <div class="logo-icon">🎬</div>
         <span class="logo-text">Reele</span>
-        <span class="logo-badge">v2</span>
+        <span class="logo-badge">v2.1</span>
     </div>
     <div class="status-indicator">
-        <span class="status-dot ready"></span>
+        <span class="status-dot ready" id="statusDot"></span>
         <span id="engineStatus">Engine Ready</span>
     </div>
 </header>
 
-<!-- Main Content -->
 <main class="main-container">
 
-    <!-- Left Column: Input & Config -->
     <div class="left-column">
         <div class="card">
-            <div class="card-title">
-                <span class="icon">📝</span>
-                Video Script
-            </div>
-
+            <div class="card-title"><span>📝</span> Video Script</div>
             <div class="form-group">
                 <label>Topic / Prompt</label>
                 <input type="text" id="topicInput" placeholder="e.g., 5 mind-blowing facts about space..." value="amazing facts about the human brain">
             </div>
-
             <div class="form-group">
                 <label>Style</label>
                 <select id="styleSelect">
-                    <option value="energetic">⚡ Energetic & Fast</option>
-                    <option value="calm">🧘 Calm & Informative</option>
-                    <option value="dramatic">🎭 Dramatic & Intense</option>
-                    <option value="lofi">🎵 Lo-fi & Chill</option>
+                    <option value="energetic">Energetic &amp; Fast</option>
+                    <option value="calm">Calm &amp; Informative</option>
+                    <option value="dramatic">Dramatic &amp; Intense</option>
+                    <option value="lofi">Lo-fi &amp; Chill</option>
                 </select>
             </div>
-
             <div class="form-group">
                 <label>Number of Scenes</label>
                 <select id="sceneCount">
@@ -60,53 +293,47 @@
         </div>
 
         <div class="card" style="margin-top: 16px;">
-            <div class="card-title">
-                <span class="icon">🎙️</span>
-                Voice & Audio
-            </div>
-
+            <div class="card-title"><span>🎙️</span> Voice &amp; Audio</div>
             <div class="form-group">
                 <label>Narrator Voice</label>
                 <div class="voice-grid" id="voiceGrid">
-                    <div class="voice-option selected" data-voice="bella">
-                        <span class="voice-name">Bella</span>
-                        <span class="voice-desc">Warm & clear</span>
-                    </div>
-                    <div class="voice-option" data-voice="adam">
-                        <span class="voice-name">Adam</span>
-                        <span class="voice-desc">Deep & strong</span>
-                    </div>
-                    <div class="voice-option" data-voice="dolly">
-                        <span class="voice-name">Dolly</span>
-                        <span class="voice-desc">Friendly</span>
-                    </div>
-                    <div class="voice-option" data-voice="george">
-                        <span class="voice-name">George</span>
-                        <span class="voice-desc">British</span>
-                    </div>
-                    <div class="voice-option" data-voice="nova">
-                        <span class="voice-name">Nova</span>
-                        <span class="voice-desc">Modern</span>
-                    </div>
-                    <div class="voice-option" data-voice="echo">
-                        <span class="voice-name">Echo</span>
-                        <span class="voice-desc">Confident</span>
-                    </div>
+                    <div class="voice-option selected" data-voice="bella"><span class="voice-name">Bella</span><span class="voice-desc">Warm &amp; clear</span></div>
+                    <div class="voice-option" data-voice="adam"><span class="voice-name">Adam</span><span class="voice-desc">Deep &amp; strong</span></div>
+                    <div class="voice-option" data-voice="dolly"><span class="voice-name">Dolly</span><span class="voice-desc">Friendly</span></div>
+                    <div class="voice-option" data-voice="george"><span class="voice-name">George</span><span class="voice-desc">British</span></div>
+                    <div class="voice-option" data-voice="nova"><span class="voice-name">Nova</span><span class="voice-desc">Modern</span></div>
+                    <div class="voice-option" data-voice="echo"><span class="voice-name">Echo</span><span class="voice-desc">Confident</span></div>
                 </div>
             </div>
-
             <div class="toggle-group">
                 <span>Background Music</span>
-                <div class="toggle active" id="musicToggle" onclick="toggleMusic()"></div>
+                <div class="toggle active" id="musicToggle"></div>
             </div>
         </div>
 
-        <!-- Generate Button -->
-        <button class="btn-generate" id="generateBtn" onclick="generateVideo()">
-            <span class="btn-text">🎬 Generate Video</span>
-        </button>
+        <div class="card" style="margin-top: 16px;">
+            <div class="card-title"><span>🏷️</span> Branding &amp; Facebook</div>
+            <div class="form-group">
+                <label>Facebook Page Name</label>
+                <input type="text" id="pageNameInput" placeholder="e.g., AmazingFactsDaily">
+            </div>
+            <div class="form-group">
+                <label>Watermark Text</label>
+                <input type="text" id="watermarkInput" placeholder="e.g., @AmazingFactsDaily (auto-filled from page name)">
+            </div>
+            <div class="form-group">
+                <label>Logo (optional)</label>
+                <div class="logo-upload-area">
+                    <div class="logo-preview" id="logoPreview"><span>+</span></div>
+                    <button class="btn-upload-logo" id="uploadLogoBtn">Upload Logo</button>
+                    <input type="file" id="logoFileInput" accept="image/*" style="display: none;">
+                    <span id="logoFileName" style="font-size: 12px; color: var(--text-secondary);"></span>
+                </div>
+            </div>
+        </div>
 
-        <!-- Progress -->
+        <button class="btn-generate" id="generateBtn">Generate Video</button>
+
         <div class="progress-section" id="progressSection" style="display: none;">
             <div class="progress-bar-container">
                 <div class="progress-bar" id="progressBar"></div>
@@ -115,14 +342,9 @@
         </div>
     </div>
 
-    <!-- Right Column: Preview & Scenes -->
     <div class="right-column">
         <div class="card">
-            <div class="card-title">
-                <span class="icon">📱</span>
-                Video Preview
-            </div>
-
+            <div class="card-title"><span>📱</span> Video Preview</div>
             <div class="video-preview" id="videoPreview">
                 <div class="video-placeholder" id="videoPlaceholder">
                     <span class="placeholder-icon">🎬</span>
@@ -130,22 +352,27 @@
                 </div>
                 <video id="videoPlayer" style="display: none;" controls loop></video>
             </div>
-
             <div class="download-section" id="downloadSection" style="display: none;">
-                <button class="btn-download" id="downloadBtn" onclick="downloadVideo()">
-                    ⬇️ Download Video
-                </button>
+                <button class="btn-download" id="downloadBtn">Download Video</button>
             </div>
         </div>
 
-        <!-- Scene List -->
-        <div class="card" style="margin-top: 16px;">
-            <div class="card-title">
-                <span class="icon">📋</span>
-                Scene Breakdown
+        <div class="card" id="captionCard" style="margin-top: 16px; display: none;">
+            <div class="card-title"><span>📘</span> Facebook Caption</div>
+            <div class="caption-section">
+                <div class="caption-header">
+                    <h4>Optimized Caption</h4>
+                    <button class="btn-copy" id="copyCaptionBtn">Copy</button>
+                </div>
+                <div class="caption-text" id="captionText"></div>
+                <div class="hashtag-list" id="hashtagList"></div>
             </div>
+        </div>
+
+        <div class="card" style="margin-top: 16px;">
+            <div class="card-title"><span>📋</span> Scene Breakdown</div>
             <div class="scene-list" id="sceneList">
-                <div class="video-placeholder" style="padding: 40px;">
+                <div class="video-placeholder" style="padding: 40px; position: relative;">
                     <p style="color: var(--text-secondary);">Scenes will appear here after generation</p>
                 </div>
             </div>
@@ -155,188 +382,285 @@
 </main>
 
 <script>
-// ─── State ────────────────────────────────────────────────────────
+(function() {
+    "use strict";
 
-let selectedVoice = 'bella';
-let addMusic = true;
-let isGenerating = false;
-let currentVideoUrl = null;
+    var selectedVoice = 'bella';
+    var addMusic = true;
+    var isGenerating = false;
+    var currentVideoUrl = null;
+    var currentCaption = null;
+    var uploadedLogoUrl = null;
 
-// ─── Voice Selection ──────────────────────────────────────────────
-
-document.querySelectorAll('.voice-option').forEach(el => {
-    el.addEventListener('click', () => {
-        document.querySelectorAll('.voice-option').forEach(v => v.classList.remove('selected'));
-        el.classList.add('selected');
-        selectedVoice = el.dataset.voice;
-    });
-});
-
-function toggleMusic() {
-    const toggle = document.getElementById('musicToggle');
-    addMusic = !addMusic;
-    toggle.classList.toggle('active', addMusic);
-}
-
-// ─── Video Generation ─────────────────────────────────────────────
-
-async function generateVideo() {
-    if (isGenerating) return;
-    isGenerating = true;
-
-    const topic = document.getElementById('topicInput').value.trim();
-    if (!topic) {
-        alert('Please enter a topic');
-        isGenerating = false;
-        return;
+    var voiceOptions = document.querySelectorAll('.voice-option');
+    for (var i = 0; i < voiceOptions.length; i++) {
+        (function(el) {
+            el.addEventListener('click', function() {
+                for (var j = 0; j < voiceOptions.length; j++) {
+                    voiceOptions[j].classList.remove('selected');
+                }
+                el.classList.add('selected');
+                selectedVoice = el.getAttribute('data-voice');
+            });
+        })(voiceOptions[i]);
     }
 
-    const style = document.getElementById('styleSelect').value;
-    const numScenes = parseInt(document.getElementById('sceneCount').value);
+    var musicToggle = document.getElementById('musicToggle');
+    musicToggle.addEventListener('click', function() {
+        addMusic = !addMusic;
+        if (addMusic) {
+            musicToggle.classList.add('active');
+        } else {
+            musicToggle.classList.remove('active');
+        }
+    });
 
-    // Update UI state
-    const btn = document.getElementById('generateBtn');
-    btn.disabled = true;
-    btn.querySelector('.btn-text').textContent = '⏳ Generating...';
+    var pageNameInput = document.getElementById('pageNameInput');
+    var watermarkInput = document.getElementById('watermarkInput');
+    pageNameInput.addEventListener('input', function() {
+        var pageName = pageNameInput.value.trim();
+        if (pageName && !watermarkInput.value.trim()) {
+            watermarkInput.value = '@' + pageName;
+        }
+    });
 
-    const progressSection = document.getElementById('progressSection');
-    progressSection.style.display = 'block';
-    updateProgress(5, 'Sending request...');
+    var uploadLogoBtn = document.getElementById('uploadLogoBtn');
+    var logoFileInput = document.getElementById('logoFileInput');
+    var logoPreview = document.getElementById('logoPreview');
+    var logoFileName = document.getElementById('logoFileName');
 
-    // Update status indicator
-    const statusDot = document.querySelector('.status-dot');
-    statusDot.className = 'status-dot processing';
-    document.getElementById('engineStatus').textContent = 'Processing...';
+    uploadLogoBtn.addEventListener('click', function() {
+        logoFileInput.click();
+    });
 
-    // Hide previous video
-    document.getElementById('videoPlayer').style.display = 'none';
-    document.getElementById('videoPlaceholder').style.display = 'flex';
-    document.getElementById('downloadSection').style.display = 'none';
+    logoFileInput.addEventListener('change', function() {
+        if (logoFileInput.files && logoFileInput.files[0]) {
+            var file = logoFileInput.files[0];
+            logoFileName.textContent = file.name;
 
-    try {
-        // Start progress animation
-        let progressVal = 5;
-        const progressInterval = setInterval(() => {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                logoPreview.innerHTML = '<img src="' + e.target.result + '" alt="Logo">';
+            };
+            reader.readAsDataURL(file);
+
+            var formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/upload-logo', { method: 'POST', body: formData })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                if (data.logo_url) {
+                    uploadedLogoUrl = data.logo_url;
+                    logoFileName.textContent = file.name + ' (uploaded)';
+                }
+            })
+            .catch(function(err) {
+                console.error('Logo upload failed:', err);
+                logoFileName.textContent = 'Upload failed';
+            });
+        }
+    });
+
+    var copyCaptionBtn = document.getElementById('copyCaptionBtn');
+    copyCaptionBtn.addEventListener('click', function() {
+        if (currentCaption) {
+            var textToCopy = currentCaption.full_caption || currentCaption.caption || '';
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(textToCopy).then(function() {
+                    copyCaptionBtn.textContent = 'Copied!';
+                    setTimeout(function() { copyCaptionBtn.textContent = 'Copy'; }, 2000);
+                });
+            } else {
+                var textarea = document.createElement('textarea');
+                textarea.value = textToCopy;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                copyCaptionBtn.textContent = 'Copied!';
+                setTimeout(function() { copyCaptionBtn.textContent = 'Copy'; }, 2000);
+            }
+        }
+    });
+
+    var generateBtn = document.getElementById('generateBtn');
+    generateBtn.addEventListener('click', function() {
+        if (isGenerating) return;
+        isGenerating = true;
+
+        var topicInput = document.getElementById('topicInput');
+        var topic = topicInput.value.trim();
+        if (!topic) {
+            alert('Please enter a topic');
+            isGenerating = false;
+            return;
+        }
+
+        var style = document.getElementById('styleSelect').value;
+        var numScenes = parseInt(document.getElementById('sceneCount').value, 10);
+        var pageName = pageNameInput.value.trim();
+        var watermark = watermarkInput.value.trim();
+
+        generateBtn.disabled = true;
+        generateBtn.textContent = 'Generating...';
+
+        var progressSection = document.getElementById('progressSection');
+        progressSection.style.display = 'block';
+        updateProgress(5, 'Sending request...');
+
+        var statusDot = document.getElementById('statusDot');
+        statusDot.className = 'status-dot processing';
+        document.getElementById('engineStatus').textContent = 'Processing...';
+
+        document.getElementById('videoPlayer').style.display = 'none';
+        document.getElementById('videoPlaceholder').style.display = 'flex';
+        document.getElementById('downloadSection').style.display = 'none';
+        document.getElementById('captionCard').style.display = 'none';
+
+        var progressVal = 5;
+        var progressInterval = setInterval(function() {
             if (progressVal < 90) {
-                progressVal += Math.random() * 3;
+                progressVal += Math.random() * 2;
                 updateProgress(Math.min(progressVal, 90), 'Processing...');
             }
-        }, 1000);
+        }, 1500);
 
-        const response = await fetch(
-            `/api/generate?topic=${encodeURIComponent(topic)}&style=${style}&voice=${selectedVoice}&num_scenes=${numScenes}&add_music=${addMusic}`
-        );
+        var url = '/api/generate?topic=' + encodeURIComponent(topic) +
+                  '&style=' + style +
+                  '&voice=' + selectedVoice +
+                  '&num_scenes=' + numScenes +
+                  '&add_music=' + addMusic +
+                  '&page_name=' + encodeURIComponent(pageName) +
+                  '&watermark_text=' + encodeURIComponent(watermark) +
+                  '&logo_url=' + encodeURIComponent(uploadedLogoUrl || '');
 
-        clearInterval(progressInterval);
+        fetch(url, { method: 'POST' })
+            .then(function(response) {
+                clearInterval(progressInterval);
+                if (!response.ok) {
+                    return response.json().then(function(err) {
+                        throw new Error(err.detail || 'Generation failed');
+                    });
+                }
+                return response.json();
+            })
+            .then(function(data) {
+                updateProgress(100, 'Complete!');
+                displayScenes(data.scenes || [], data.scene_images || []);
+                displayCaption(data.caption);
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Generation failed');
-        }
+                if (data.video_url) {
+                    currentVideoUrl = data.video_url;
+                    var player = document.getElementById('videoPlayer');
+                    player.src = data.video_url;
+                    player.style.display = 'block';
+                    document.getElementById('videoPlaceholder').style.display = 'none';
+                    document.getElementById('downloadSection').style.display = 'block';
+                    try { player.play(); } catch(e) {}
+                }
 
-        const data = await response.json();
-
-        updateProgress(100, 'Complete!');
-
-        // Show scenes
-        displayScenes(data.scenes);
-
-        // Show video
-        if (data.video_url) {
-            currentVideoUrl = data.video_url;
-            const player = document.getElementById('videoPlayer');
-            player.src = data.video_url;
-            player.style.display = 'block';
-            document.getElementById('videoPlaceholder').style.display = 'none';
-            document.getElementById('downloadSection').style.display = 'block';
-            player.play().catch(() => {});
-        }
-
-        // Update status
-        statusDot.className = 'status-dot ready';
-        document.getElementById('engineStatus').textContent = 'Video Ready';
-
-    } catch (error) {
-        console.error('Generation error:', error);
-        updateProgress(0, `Error: ${error.message}`);
-
-        const statusDot = document.querySelector('.status-dot');
-        statusDot.className = 'status-dot error';
-        document.getElementById('engineStatus').textContent = 'Error';
-        alert('Video generation failed: ' + error.message);
-
-    } finally {
-        isGenerating = false;
-        btn.disabled = false;
-        btn.querySelector('.btn-text').textContent = '🎬 Generate Video';
-    }
-}
-
-function updateProgress(percent, text) {
-    const bar = document.getElementById('progressBar');
-    const label = document.getElementById('progressText');
-    bar.style.width = percent + '%';
-    label.textContent = text;
-}
-
-function displayScenes(scenes) {
-    const container = document.getElementById('sceneList');
-    container.innerHTML = '';
-
-    scenes.forEach((scene, idx) => {
-        const item = document.createElement('div');
-        item.className = 'scene-item fade-in';
-        item.style.animationDelay = `${idx * 0.1}s`;
-
-        const typeColors = {
-            hook: '#e17055',
-            fact: '#0984e3',
-            story: '#6c5ce7',
-            insight: '#00b894',
-            cta: '#e84393'
-        };
-
-        item.innerHTML = `
-            <div class="scene-header">
-                <span class="scene-badge ${scene.scene_type}">${scene.scene_type}</span>
-                <span class="scene-number">Scene ${scene.scene_number}</span>
-            </div>
-            <div class="scene-text">${scene.text}</div>
-            <div class="scene-prompt">🎨 ${scene.image_prompt || 'No prompt'}</div>
-        `;
-
-        container.appendChild(item);
+                statusDot.className = 'status-dot ready';
+                document.getElementById('engineStatus').textContent = 'Video Ready';
+            })
+            .catch(function(error) {
+                clearInterval(progressInterval);
+                console.error('Generation error:', error);
+                updateProgress(0, 'Error: ' + error.message);
+                statusDot.className = 'status-dot error';
+                document.getElementById('engineStatus').textContent = 'Error';
+                alert('Video generation failed: ' + error.message);
+            })
+            .finally(function() {
+                isGenerating = false;
+                generateBtn.disabled = false;
+                generateBtn.textContent = 'Generate Video';
+            });
     });
-}
 
-function downloadVideo() {
-    if (currentVideoUrl) {
-        const a = document.createElement('a');
-        a.href = currentVideoUrl;
-        a.download = 'reele_video.mp4';
-        a.click();
-    }
-}
-
-// ─── Health Check ──────────────────────────────────────────────────
-
-async function checkHealth() {
-    try {
-        const resp = await fetch('/api/health');
-        const data = await resp.json();
-        const statusDot = document.querySelector('.status-dot');
-        if (data.status === 'healthy') {
-            statusDot.className = 'status-dot ready';
-            document.getElementById('engineStatus').textContent = 'Engine Ready';
+    var downloadBtn = document.getElementById('downloadBtn');
+    downloadBtn.addEventListener('click', function() {
+        if (currentVideoUrl) {
+            var a = document.createElement('a');
+            a.href = currentVideoUrl;
+            a.download = 'reele_video.mp4';
+            a.click();
         }
-    } catch (e) {
-        const statusDot = document.querySelector('.status-dot');
-        statusDot.className = 'status-dot error';
-        document.getElementById('engineStatus').textContent = 'Offline';
-    }
-}
+    });
 
-checkHealth();
+    function updateProgress(percent, text) {
+        var bar = document.getElementById('progressBar');
+        var label = document.getElementById('progressText');
+        bar.style.width = percent + '%';
+        label.textContent = text;
+    }
+
+    function displayScenes(scenes, sceneImages) {
+        var container = document.getElementById('sceneList');
+        container.innerHTML = '';
+
+        for (var i = 0; i < scenes.length; i++) {
+            var scene = scenes[i];
+            var item = document.createElement('div');
+            item.className = 'scene-item';
+
+            var imageHtml = '<div class="scene-image-placeholder">🖼️</div>';
+
+            item.innerHTML =
+                '<div class="scene-header">' +
+                    '<span class="scene-badge ' + (scene.scene_type || '') + '">' + (scene.scene_type || '') + '</span>' +
+                    '<span class="scene-number">Scene ' + (scene.scene_number || (i+1)) + '</span>' +
+                '</div>' +
+                '<div class="scene-content">' +
+                    imageHtml +
+                    '<div class="scene-text-wrap">' +
+                        '<div class="scene-text">' + (scene.text || '') + '</div>' +
+                        '<div class="scene-prompt">' + (scene.image_prompt || 'No prompt') + '</div>' +
+                    '</div>' +
+                '</div>';
+
+            container.appendChild(item);
+        }
+    }
+
+    function displayCaption(captionData) {
+        if (!captionData) return;
+        currentCaption = captionData;
+        var captionCard = document.getElementById('captionCard');
+        var captionText = document.getElementById('captionText');
+        var hashtagList = document.getElementById('hashtagList');
+
+        captionCard.style.display = 'block';
+        captionText.textContent = captionData.caption || '';
+
+        hashtagList.innerHTML = '';
+        if (captionData.hashtags && captionData.hashtags.length > 0) {
+            for (var i = 0; i < captionData.hashtags.length; i++) {
+                var tag = captionData.hashtags[i];
+                var tagEl = document.createElement('span');
+                tagEl.className = 'hashtag-tag';
+                tagEl.textContent = '#' + tag.replace(/^#/, '');
+                hashtagList.appendChild(tagEl);
+            }
+        }
+    }
+
+    try {
+        fetch('/api/health')
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                if (data.status === 'healthy') {
+                    document.getElementById('statusDot').className = 'status-dot ready';
+                    document.getElementById('engineStatus').textContent = 'Engine Ready';
+                }
+            })
+            .catch(function() {
+                document.getElementById('statusDot').className = 'status-dot error';
+                document.getElementById('engineStatus').textContent = 'Offline';
+            });
+    } catch(e) {}
+
+})();
 </script>
 
 </body>

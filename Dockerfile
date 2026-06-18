@@ -1,38 +1,43 @@
 FROM python:3.11-slim
 
-# Install system dependencies
+# Force rebuild marker — bump on every deploy to invalidate Docker layer cache
+ENV REELE_V2_VERSION=2026-06-19-v3
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fonts-dejavu \
     fonts-noto \
     fonts-noto-cjk \
     fonts-freefont-ttf \
+    curl \
+    ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+RUN npm install -g z-ai-web-dev-sdk
+
+ENV NODE_PATH=/usr/lib/node_modules
+
 WORKDIR /app
 
-# Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY . .
 
-# Create output and cache directories
-RUN mkdir -p /tmp/reele_output /tmp/reele_cache/images /tmp/reele_cache/tts /tmp/reele_cache/music
+RUN if [ -f .z-ai-config ]; then cp .z-ai-config /etc/.z-ai-config && chmod 644 /etc/.z-ai-config; fi
 
-# Environment variables
+RUN mkdir -p /tmp/reele_output /tmp/reele_cache/images /tmp/reele_cache/tts /tmp/reele_cache/music /tmp/reele_cache/logos /tmp/reele_uploads
+
 ENV OUTPUT_DIR=/tmp/reele_output
+ENV UPLOAD_DIR=/tmp/reele_uploads
 ENV CACHE_DIR=/tmp/reele_cache
 ENV PORT=7860
 
-# Expose port
 EXPOSE 7860
 
-# Health check (use python since curl isn't available in slim)
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/api/health')" || exit 1
 
-# Run the application
 CMD ["python", "app.py"]
