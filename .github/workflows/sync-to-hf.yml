@@ -42,7 +42,7 @@ jobs:
           from huggingface_hub import HfApi, CommitOperationAdd
 
           token = os.environ["HF_TOKEN"]
-          repo_id = "tamusa2019/reele-video-engine"
+          repo_id = "tamusa2025/reele-video-engine"
           api = HfApi(token=token)
 
           # Verify space exists and token has access
@@ -92,5 +92,5 @@ jobs:
           sleep 5
           curl -sS \
             -H "Authorization: Bearer $HF_TOKEN" \
-            https://huggingface.co/api/spaces/tamusa2019/reele-video-engine \
+            https://huggingface.co/api/spaces/tamusa2025/reele-video-engine \
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('Stage:', d.get('runtime',{}).get('stage')); print('SHA:', (d.get('sha') or '')[:8])"
