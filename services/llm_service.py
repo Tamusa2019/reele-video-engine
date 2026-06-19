@@ -162,8 +162,31 @@ def _generate_topic_scenes(topic: str, style: str, num_scenes: int) -> List[Dict
 
 
 def _get_topic_facts(topic: str) -> List[Dict]:
-    """Get topic-specific facts. Uses curated knowledge for common topics."""
+    """Get topic-specific facts. Uses curated knowledge for common topics.
+
+    Normalizes the topic first by stripping filler phrases like
+    'amazing facts about', 'incredible facts about', 'facts about' so that
+    a user asking for 'amazing facts about sunlight' is recognized as
+    asking about 'sunlight'.
+    """
     topic_lower = topic.lower().strip()
+
+    # Normalize: strip filler phrases so curated matching works
+    import re as _re
+    filler_patterns = [
+        r"^(amazing|incredible|interesting|fun|shocking|mind[- ]blowing|crazy|weird|unknown|hidden)\s+facts?\s+(about|on|of|regarding)\s+",
+        r"^(facts?|truth|secrets?|things)\s+(about|on|of|regarding)\s+",
+        r"^(everything|all)\s+(you|we)\s+(need to know|should know|must know)\s+(about|on|of)\s+",
+        r"^(why|how|what)\s+",
+        r"^(the)\s+",
+    ]
+    normalized = topic_lower
+    for pat in filler_patterns:
+        normalized = _re.sub(pat, "", normalized).strip()
+    # Collapse multi-word topics that may be split (e.g. "sun light" -> "sunlight")
+    normalized_collapsed = normalized.replace(" ", "")
+    # Also try the normalized form with spaces preserved
+    candidates = [topic_lower, normalized, normalized_collapsed]
 
     curated = {
         "mosquito": [
@@ -179,6 +202,20 @@ def _get_topic_facts(topic: str) -> List[Dict]:
             {"text": "Scientists found that your brain makes decisions up to 7 seconds before you're even aware of them. Your subconscious is running the show.", "search_query": "brain subconscious decisions"},
             {"text": "Your brain can process an image in just 13 milliseconds. That's faster than you can blink, which takes about 300 milliseconds.", "search_query": "brain image processing speed"},
             {"text": "Every time you recall a memory, your brain reconstructs it from scratch. This means your memories are never exact replays - they're rebuilt every single time.", "search_query": "memory reconstruction brain"},
+        ],
+        "sunlight": [
+            {"text": "Sunlight takes about 8 minutes and 20 seconds to travel from the Sun to Earth. That means you're always seeing the Sun as it was in the past.", "search_query": "sunlight travel time earth"},
+            {"text": "Your skin makes vitamin D when ultraviolet UVB rays from sunlight hit it. Just 15 minutes a day is enough to keep your bones strong and healthy.", "search_query": "sunlight vitamin D skin"},
+            {"text": "Sunlight is actually made of all the colors of the rainbow mixed together. A prism can split it into red, orange, yellow, green, blue, indigo, and violet.", "search_query": "sunlight spectrum colors rainbow"},
+            {"text": "Plants use sunlight to make their own food through photosynthesis. They convert sunlight, water, and carbon dioxide into sugar and oxygen - it's the basis of all life on Earth.", "search_query": "photosynthesis plants sunlight"},
+            {"text": "Sunlight boosts your mood by triggering serotonin production in your brain. That's why people feel happier on sunny days and more depressed during dark winter months.", "search_query": "sunlight serotonin mood"},
+            {"text": "The Sun loses about 4 million tons of mass every second as it converts hydrogen into helium through nuclear fusion. Don't worry - it has enough fuel for another 5 billion years.", "search_query": "sun nuclear fusion mass loss"},
+        ],
+        "sun": [
+            {"text": "The Sun is so massive that you could fit over 1.3 million Earths inside it. It makes up 99.8% of all the mass in our entire solar system.", "search_query": "sun size earth comparison"},
+            {"text": "The surface of the Sun is about 5,500 degrees Celsius, but its core reaches a scorching 15 million degrees - hot enough to sustain nuclear fusion.", "search_query": "sun surface core temperature"},
+            {"text": "Light from the Sun takes 8 minutes and 20 seconds to reach Earth. If the Sun suddenly disappeared, we wouldn't know for over 8 minutes.", "search_query": "sun light travel time"},
+            {"text": "The Sun is about 4.6 billion years old and is roughly halfway through its life. In about 5 billion years it will expand into a red giant and swallow the inner planets.", "search_query": "sun age red giant"},
         ],
         "space": [
             {"text": "A day on Venus is longer than a year on Venus. It takes 243 Earth days to rotate once, but only 225 Earth days to orbit the Sun.", "search_query": "venus day longer than year"},
@@ -218,9 +255,11 @@ def _get_topic_facts(topic: str) -> List[Dict]:
         ],
     }
 
+    # Check each curated key against all candidate forms of the topic
     for key, facts in curated.items():
-        if key in topic_lower:
-            return facts
+        for cand in candidates:
+            if key in cand:
+                return facts
 
     return _generate_generic_facts(topic)
 
@@ -282,7 +321,7 @@ def _generate_image_prompt(scene_text: str, topic: str, scene_type: str, scene_n
     abstract topic-generic background.
     """
     # Step 1: Extract concrete visual concept from scene text
-    visual_concept = _extract_visual_concept(scene_text, topic, scene_type)
+    visual_concept = _extract_visual_concept(scene_text, topic, scene_type, scene_number)
 
     # Step 2: Apply scene-type-specific style modifiers
     style_modifiers = {
@@ -307,24 +346,55 @@ def _generate_image_prompt(scene_text: str, topic: str, scene_type: str, scene_n
     ]
     colors = color_palettes[(scene_number - 1) % len(color_palettes)]
 
+    # Inject a unique scene identifier so the image cache keys are guaranteed
+    # distinct per scene even if the visual_concept happens to be identical.
+    # This also nudges the AI image generator toward producing a different image.
+    scene_tag = f"scene {scene_number} of {scene_number}"
+
     return (
-        f"{visual_concept}, {style}, {colors} color palette, "
+        f"{scene_tag} | {visual_concept}, {style}, {colors} color palette, "
         f"cinematic lighting, ultra detailed, 4K quality, professional photography, "
         f"vertical 9:16 composition, sharp focus, high detail, no text, no watermark"
     )
 
 
-def _extract_visual_concept(scene_text: str, topic: str, scene_type: str) -> str:
+def _extract_visual_concept(scene_text: str, topic: str, scene_type: str, scene_number: int = 1) -> str:
     """Extract a concrete, photographable visual description from the scene text.
 
     Uses keyword matching to find specific visual concepts mentioned in the scene,
     falling back to a topic-aware concrete visual when no keyword matches.
+    The fallback varies by scene_number so each scene gets a distinct image.
     """
     text_lower = (scene_text or "").lower()
     topic_lower = (topic or "").lower()
 
+    # For hook and CTA scenes, prefer hook/CTA-specific visuals over topic visuals.
+    # This prevents the hook from showing the same image as the fact scenes.
+    # We do this by checking hook/CTA keywords FIRST when scene_type is hook or cta.
+    is_hook_or_cta = scene_type in ("hook", "cta")
+
+    # Hook scene visuals — checked first for hook scenes
+    hook_cta_mappings = [
+        ("won't believe", "person with shocked expression looking at glowing discovery, dramatic spotlight, dark background"),
+        ("blow your mind", "explosion of colorful particles around human head silhouette, mind-blown visualization, vibrant colors"),
+        ("stop scrolling", "vertical smartphone screen with thumb frozen mid-scroll, dramatic lighting, social media concept"),
+        ("secret", "mysterious locked door with golden light spilling through keyhole, atmospheric, cinematic intrigue"),
+        ("hidden", "partially obscured object glowing softly in darkness, mysterious reveal, dramatic low-key lighting"),
+        ("wondered", "person deep in thought with question marks floating around, curious expression, dramatic lighting"),
+        ("follow", "person pointing at follow button floating in air, social media interface, vibrant modern aesthetic"),
+        ("share", "hands passing glowing smartphone between two people, sharing concept, warm friendly lighting"),
+        ("comment", "person typing on phone with comment bubbles floating around, social media interaction, modern aesthetic"),
+        ("subscribe", "red subscribe button glowing with energy, call-to-action visual, dynamic composition"),
+    ]
+
+    if is_hook_or_cta:
+        for keyword, visual in hook_cta_mappings:
+            if keyword in text_lower:
+                return visual
+
     # Comprehensive keyword -> concrete visual mapping
     # Each entry is (keyword, visual_description) - the visual MUST be specific and photographable
+    # ORDER MATTERS: more specific keywords must come BEFORE generic ones so they match first
     visual_mappings = [
         # === Mosquito / insect visuals ===
         ("carbon dioxide", "macro photograph of a mosquito in flight with visible breath vapor clouds in cold air, scientific visualization of invisible CO2 gas waves around a person"),
@@ -386,7 +456,6 @@ def _extract_visual_concept(scene_text: str, topic: str, scene_type: str) -> str
         ("sense of smell", "close-up of dog's wet nose with scent particle visualization, scientific illustration of olfactory receptors"),
         ("nose print", "extreme close-up of dog's nose with unique pattern, scientific comparison to fingerprint, macro photography"),
         ("cancer", "dog sniffing patient's hand in medical setting, scientific visualization of disease detection, hopeful atmosphere"),
-        ("dream", "sleeping dog with paw twitching, translucent dream bubble showing running rabbit, warm lighting"),
         ("dog", "professional portrait of golden retriever with intelligent eyes, soft natural lighting, shallow depth of field"),
 
         # === Coffee visuals ===
@@ -414,18 +483,23 @@ def _extract_visual_concept(scene_text: str, topic: str, scene_type: str) -> str
         ("numbers", "macro photograph of numbers floating in space, abstract data visualization, cinematic lighting"),
         ("statistics", "infographic style visualization with charts and graphs floating in 3D space, professional data presentation"),
 
-        # === Hook scene visuals ===
-        ("won't believe", "person with shocked expression looking at glowing discovery, dramatic spotlight, dark background"),
-        ("blow your mind", "explosion of colorful particles around human head silhouette, mind-blown visualization, vibrant colors"),
-        ("stop scrolling", "vertical smartphone screen with thumb frozen mid-scroll, dramatic lighting, social media concept"),
-        ("secret", "mysterious locked door with golden light spilling through keyhole, atmospheric, cinematic intrigue"),
-        ("hidden", "partially obscured object glowing softly in darkness, mysterious reveal, dramatic low-key lighting"),
-
-        # === CTA scene visuals ===
-        ("follow", "person pointing at follow button floating in air, social media interface, vibrant modern aesthetic"),
-        ("share", "hands passing glowing smartphone between two people, sharing concept, warm friendly lighting"),
-        ("comment", "person typing on phone with comment bubbles floating around, social media interaction, modern aesthetic"),
-        ("subscribe", "red subscribe button glowing with energy, call-to-action visual, dynamic composition"),
+        # === Sun / sunlight visuals — SPECIFIC keywords BEFORE generic 'sun'/'sunlight' ===
+        ("vitamin d", "person standing in golden sunlight with skin glowing, scientific visualization of vitamin D absorption, warm tones"),
+        ("photosynthesis", "lush green plant leaf macro with sunlight hitting it, scientific visualization of photosynthesis process, vibrant greens"),
+        ("serotonin", "human brain glowing with serotonin molecules, scientific visualization of mood chemicals, warm golden tones"),
+        ("rainbow", "brilliant rainbow arcing across stormy sky, vivid colors, dramatic clouds, professional landscape photography"),
+        ("spectrum", "glass prism splitting white light into rainbow spectrum on dark background, scientific photography"),
+        ("prism", "glass prism splitting white light into rainbow spectrum on dark background, scientific photography"),
+        ("8 minutes", "Sun in deep space with light beam traveling toward distant Earth, cosmic scale visualization, NASA style"),
+        ("nuclear fusion", "Sun's core cross-section showing hydrogen fusing into helium, intense plasma glow, scientific illustration"),
+        ("ultraviolet", "person's skin under UV light showing hidden patterns, scientific photography, purple and blue tones"),
+        ("uvb", "scientific illustration of UVB rays hitting skin, ultraviolet light visualization, medical aesthetic"),
+        ("photon", "scientific visualization of photons as glowing particles traveling through space, physics concept art"),
+        ("light beam", "single dramatic light beam cutting through dark forest, atmospheric, cinematic photography"),
+        ("light rays", "god rays streaming through cloudy sky, dramatic atmospheric lighting, professional photography"),
+        ("sun light", "golden sunlight beams piercing through forest canopy, god rays, dust particles floating in light, warm atmospheric photography"),
+        ("sunlight", "golden sunlight beams piercing through forest canopy, god rays, dust particles floating in light, warm atmospheric photography"),
+        ("sun", "close-up of Sun surface with solar flares and sunspots, intense orange and yellow glow, NASA photograph"),
     ]
 
     # Check each keyword against the scene text
@@ -433,16 +507,54 @@ def _extract_visual_concept(scene_text: str, topic: str, scene_type: str) -> str
         if keyword in text_lower:
             return visual
 
-    # Fallback: build a concrete visual from the topic itself (not abstract)
-    # If topic mentions a specific subject, render that subject in a scene
-    topic_words = topic_lower.split()
-    if len(topic_words) >= 2:
-        # Use the topic as the visual subject with concrete photographic framing
-        return f"professional photograph of {topic}, clear subject in focus, blurred background, documentary style"
-    elif topic_lower:
-        return f"macro photograph of {topic}, dramatic lighting, ultra detailed, scientific aesthetic"
+    # Fallback: build a concrete visual from the topic itself, varied by scene_number
+    # so each scene gets a visually distinct image even on the same topic.
+    # Use the normalized topic (without filler phrases) as the visual subject.
+    import re as _re
+    topic_normalized = topic_lower
+    filler_patterns = [
+        r"^(amazing|incredible|interesting|fun|shocking|mind[- ]blowing|crazy|weird|unknown|hidden)\s+facts?\s+(about|on|of|regarding)\s+",
+        r"^(facts?|truth|secrets?|things)\s+(about|on|of|regarding)\s+",
+        r"^(everything|all)\s+(you|we)\s+(need to know|should know|must know)\s+(about|on|of)\s+",
+        r"^(why|how|what)\s+",
+        r"^(the)\s+",
+    ]
+    for pat in filler_patterns:
+        topic_normalized = _re.sub(pat, "", topic_normalized).strip()
 
-    return "cinematic abstract visualization, professional photography"
+    # Variety framings per scene_number so AI image gen produces distinct images
+    framings = [
+        "dramatic close-up",
+        "wide establishing shot",
+        "macro detail photograph",
+        "aerial drone view",
+        "cinematic portrait",
+        "abstract artistic interpretation",
+        "documentary behind-the-scenes",
+        "scientific visualization",
+    ]
+    framing = framings[(scene_number - 1) % len(framings)]
+
+    lighting_moods = [
+        "golden hour backlight",
+        "moody low-key lighting",
+        "bright daylight illumination",
+        "dramatic rim lighting",
+        "soft diffused window light",
+        "neon cyberpunk glow",
+        "warm candlelit atmosphere",
+        "cold blue twilight",
+    ]
+    lighting = lighting_moods[(scene_number - 1) % len(lighting_moods)]
+
+    if topic_normalized:
+        return (
+            f"{framing} of {topic_normalized}, {lighting}, "
+            f"scene {scene_number} of a documentary series, "
+            f"each scene visually distinct, professional photography"
+        )
+
+    return f"cinematic abstract visualization scene {scene_number}, {lighting}, professional photography"
 
 
 async def generate_facebook_caption(

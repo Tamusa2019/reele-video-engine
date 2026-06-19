@@ -72,6 +72,10 @@ async def generate_scene_image(prompt: str, scene_type: str = "fact", scene_numb
 
     Tries z-ai-web-dev-sdk first (best quality, scene-specific), then falls back
     to Pollinations.ai, then to a gradient background.
+
+    The scene_number is passed through to all generators so they can vary their
+    output (e.g. different seeds) and to the gradient fallback so each scene
+    gets a visually distinct gradient even when AI generation fails.
     """
     cached = _cache_path(prompt)
     if os.path.exists(cached) and os.path.getsize(cached) > 1000:
@@ -81,17 +85,17 @@ async def generate_scene_image(prompt: str, scene_type: str = "fact", scene_numb
     enhanced = _enhance_prompt(prompt, scene_type)
 
     # PRIMARY: z-ai-web-dev-sdk (best quality, actually follows the prompt)
-    result = await _try_zai_sdk(enhanced, cached)
+    result = await _try_zai_sdk(enhanced, cached, scene_number)
     if result:
         return result
 
     # FALLBACK 1: Pollinations POST
-    result = await _try_pollinations_post(enhanced, cached)
+    result = await _try_pollinations_post(enhanced, cached, scene_number)
     if result:
         return result
 
     # FALLBACK 2: Pollinations GET
-    result = await _try_pollinations_get(enhanced, cached)
+    result = await _try_pollinations_get(enhanced, cached, scene_number)
     if result:
         return result
 
@@ -100,7 +104,7 @@ async def generate_scene_image(prompt: str, scene_type: str = "fact", scene_numb
     if result:
         return result
 
-    # LAST RESORT: Gradient background
+    # LAST RESORT: Gradient background (varied by scene_number)
     result = _generate_gradient(cached, scene_type, scene_number)
     if result:
         return result
@@ -108,7 +112,7 @@ async def generate_scene_image(prompt: str, scene_type: str = "fact", scene_numb
     raise RuntimeError(f"All image generation methods failed for prompt: {prompt[:50]}")
 
 
-async def _try_zai_sdk(prompt: str, output_path: str) -> Optional[str]:
+async def _try_zai_sdk(prompt: str, output_path: str, scene_number: int = 1) -> Optional[str]:
     """Generate image using z-ai-web-dev-sdk via a Node.js subprocess.
 
     z-ai actually follows the prompt and produces scene-specific images,
@@ -188,14 +192,15 @@ def _enhance_prompt(prompt: str, scene_type: str) -> str:
     return f"{prompt}, {addition}"
 
 
-async def _try_pollinations_post(prompt: str, output_path: str) -> Optional[str]:
+async def _try_pollinations_post(prompt: str, output_path: str, scene_number: int = 1) -> Optional[str]:
     """Try generating image via Pollinations.ai POST API."""
     try:
-        logger.info(f"Trying Pollinations.ai POST for: {prompt[:60]}...")
+        logger.info(f"Trying Pollinations.ai POST for scene {scene_number}: {prompt[:60]}...")
 
-        # Deterministic seed based on prompt hash so each unique prompt always
-        # produces the same image (consistency across regenerations)
-        seed = int(hashlib.md5(prompt.lower().strip().encode()).hexdigest()[:8], 16) % 999999
+        # Deterministic seed based on prompt hash + scene_number so each scene
+        # produces a different image even if prompts are similar
+        seed_base = hashlib.md5(prompt.lower().strip().encode()).hexdigest()
+        seed = (int(seed_base[:8], 16) + scene_number * 1000) % 999999
 
         payload = {
             "prompt": prompt,
@@ -246,17 +251,18 @@ async def _try_pollinations_post(prompt: str, output_path: str) -> Optional[str]
     return None
 
 
-async def _try_pollinations_get(prompt: str, output_path: str) -> Optional[str]:
+async def _try_pollinations_get(prompt: str, output_path: str, scene_number: int = 1) -> Optional[str]:
     """Try generating image via Pollinations.ai GET API."""
     try:
         import urllib.parse
         encoded_prompt = urllib.parse.quote(prompt)
-        # Deterministic seed for consistency
-        seed = int(hashlib.md5(prompt.lower().strip().encode()).hexdigest()[:8], 16) % 999999
+        # Deterministic seed + scene_number offset for per-scene variety
+        seed_base = hashlib.md5(prompt.lower().strip().encode()).hexdigest()
+        seed = (int(seed_base[:8], 16) + scene_number * 1000) % 999999
 
         url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&nologo=true&seed={seed}&model=flux&enhance=true"
 
-        logger.info(f"Trying Pollinations.ai GET for: {prompt[:50]}...")
+        logger.info(f"Trying Pollinations.ai GET for scene {scene_number}: {prompt[:50]}...")
 
         async with httpx.AsyncClient(
             timeout=120.0,
@@ -359,9 +365,16 @@ def _resize_to_vertical(input_path: str, output_path: str) -> Optional[str]:
 
 
 def _generate_gradient(output_path: str, scene_type: str, scene_number: int = 1) -> Optional[str]:
-    """Generate a gradient background image as last resort."""
+    """Generate a gradient background image as last resort.
+
+    Varies the palette by BOTH scene_type AND scene_number so each scene
+    gets a visually distinct gradient even when multiple scenes share the
+    same scene_type (e.g. multiple 'fact' scenes).
+    """
     try:
         palettes = GRADIENT_PALETTES.get(scene_type, GRADIENT_PALETTES["fact"])
+        # Combine scene_number into the palette index so different scenes of
+        # the same type get different colors
         palette_idx = (scene_number - 1) % len(palettes)
         c1, c2 = palettes[palette_idx]
 
@@ -378,6 +391,9 @@ def _generate_gradient(output_path: str, scene_type: str, scene_number: int = 1)
 
         if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 100:
             logger.info(f"Generated gradient for scene {scene_number} ({scene_type}): {output_path}")
+            # Add a scene number label so the gradient is visually distinguishable
+            # even if colors happen to be similar
+            _add_scene_label(output_path, output_path, scene_number, scene_type)
             return output_path
 
         cmd = [
@@ -391,9 +407,38 @@ def _generate_gradient(output_path: str, scene_type: str, scene_number: int = 1)
         subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if os.path.exists(output_path):
             logger.info(f"Generated solid color fallback: {output_path}")
+            _add_scene_label(output_path, output_path, scene_number, scene_type)
             return output_path
 
     except Exception as e:
         logger.error(f"Gradient generation error: {e}")
 
     return None
+
+
+def _add_scene_label(input_path: str, output_path: str, scene_number: int, scene_type: str) -> None:
+    """Burn a small scene-number label into the bottom-right of a fallback image.
+
+    This guarantees that even if two scenes produce similar-looking gradients,
+    the user can clearly see they are different scenes.
+    """
+    try:
+        label = f"SCENE {scene_number} · {scene_type.upper()}"
+        escaped = label.replace("'", "\\'").replace(":", "\\:").replace("%", "%%")
+        tmp = output_path + "_labeled.jpg"
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf",
+            f"drawtext=text='{escaped}':"
+            f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+            f"fontsize=42:fontcolor=white@0.85:"
+            f"x=w-text_w-40:y=h-text_h-40:"
+            f"borderw=3:bordercolor=black@0.7",
+            "-frames:v", "1", "-update", "1", tmp
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode == 0 and os.path.exists(tmp):
+            import shutil as _sh
+            _sh.move(tmp, output_path)
+    except Exception:
+        pass  # label is decorative; don't fail the whole generation
