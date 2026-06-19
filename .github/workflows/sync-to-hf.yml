@@ -85,12 +85,13 @@ jobs:
           PYEOF_INNER
           echo "=== Sync complete ==="
 
-      - name: Check Space runtime status
+      - name: Check Space runtime status (non-blocking)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          sleep 5
+          sleep 10
           curl -sS \
             -H "Authorization: Bearer $HF_TOKEN" \
             https://huggingface.co/api/spaces/tamusa2025/reele-video-engine \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); print('Stage:', d.get('runtime',{}).get('stage')); print('SHA:', (d.get('sha') or '')[:8])"
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print('Stage:', d.get('runtime',{}).get('stage')); print('SHA:', (d.get('sha') or '')[:8])" || echo "(status check skipped - HF API may be rate-limited)"
+        continue-on-error: true
