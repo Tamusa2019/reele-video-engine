@@ -68,7 +68,7 @@ class RenderService:
             ):
                 video_path = os.path.join(job_dir, f"scene_{i:02d}.mp4")
                 await self._create_scene_video(
-                    img_path, audio_path, duration, video_path
+                    img_path, audio_path, duration, video_path, scene_index=i
                 )
                 scene_videos.append(video_path)
 
@@ -142,18 +142,39 @@ class RenderService:
         image_path: str,
         audio_path: str,
         duration: float,
-        output_path: str
+        output_path: str,
+        scene_index: int = 0
     ):
-        """Create a video clip from an image + audio."""
+        """Create a video clip from an image + audio with Ken Burns motion.
+
+        Alternates between zoom-in and zoom-out per scene for visual variety.
+        """
         fps = 30
         iw = WIDTH
         ih = HEIGHT
-        use_ken_burns = os.environ.get("ENABLE_KEN_BURNS", "0") == "1"
+        # Enable Ken Burns by default for more dynamic video (was opt-in, now opt-out)
+        use_ken_burns = os.environ.get("ENABLE_KEN_BURNS", "1") != "0"
 
         if use_ken_burns:
-            total_frames = int(duration * fps)
+            total_frames = max(int(duration * fps), 30)
+            # Alternate between zoom-in (even scenes) and zoom-out (odd scenes) for variety
+            if scene_index % 2 == 0:
+                # Zoom in: start at 1.0, end at 1.12
+                zoom_expr = f"min(zoom+0.0005,1.15)"
+                # Subtle pan from center
+                x_expr = "iw/2-(iw/zoom/2)"
+                y_expr = "ih/2-(ih/zoom/2)"
+            else:
+                # Zoom out: start at 1.15, end at 1.0
+                zoom_expr = f"if(eq(on,1),1.15,max(zoom-0.0005,1.0))"
+                x_expr = "iw/2-(iw/zoom/2)"
+                y_expr = "ih/2-(ih/zoom/2)"
+
             zoompan_filter = (
-                f"zoompan=z='min(zoom+0.0003,1.12)':"
+                f"zoompan="
+                f"z='{zoom_expr}':"
+                f"x='{x_expr}':"
+                f"y='{y_expr}':"
                 f"d={total_frames}:"
                 f"s={iw}x{ih}:"
                 f"fps={fps}"
@@ -172,7 +193,7 @@ class RenderService:
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
             if result.returncode == 0:
-                logger.info(f"Scene video (Ken Burns) created: {output_path}")
+                logger.info(f"Scene video (Ken Burns, scene {scene_index}) created: {output_path}")
                 return
             logger.warning(f"Ken Burns failed, using simple loop: {result.stderr[:200]}")
 
@@ -201,13 +222,29 @@ class RenderService:
         durations: List[float],
         output_path: str
     ):
-        """Concatenate video clips with crossfade transitions using xfade filter."""
+        """Concatenate video clips with varied crossfade transitions using xfade filter.
+
+        Uses a different xfade transition per scene cut for visual variety:
+        fade, slideleft, circleopen, wipeup, dissolve, etc.
+        """
         if len(video_paths) <= 1:
             shutil.copy2(video_paths[0], output_path)
             return
 
         num_videos = len(video_paths)
         fade_dur = CROSSFADE_DURATION
+
+        # Variety of transitions — cycled per scene cut
+        transitions = [
+            "fade",        # Classic crossfade
+            "slideleft",   # Slide in from right
+            "circleopen",  # Circle reveal
+            "wipeup",      # Wipe upward
+            "dissolve",    # Soft dissolve
+            "slideright",  # Slide in from left
+            "radial",      # Radial wipe
+            "wipeleft",    # Wipe leftward
+        ]
 
         inputs = []
         for vp in video_paths:
@@ -226,8 +263,9 @@ class RenderService:
         audio_filter_parts = []
 
         if num_videos == 2:
+            t = transitions[0]
             filter_parts.append(
-                f"[0:v][1:v]xfade=transition=fade:duration={fade_dur}:offset={offsets[0]:.2f}[vout]"
+                f"[0:v][1:v]xfade=transition={t}:duration={fade_dur}:offset={offsets[0]:.2f}[vout]"
             )
             audio_filter_parts.append(
                 f"[0:a][1:a]acrossfade=d={fade_dur}[aout]"
@@ -236,11 +274,12 @@ class RenderService:
             prev_vlabel = "0:v"
             prev_alabel = "0:a"
             for i in range(num_videos - 1):
+                t = transitions[i % len(transitions)]
                 if i < num_videos - 2:
                     out_vlabel = f"v{i}"
                     out_alabel = f"a{i}"
                     filter_parts.append(
-                        f"[{prev_vlabel}][{i+1}:v]xfade=transition=fade:duration={fade_dur}:offset={offsets[i]:.2f}[{out_vlabel}]"
+                        f"[{prev_vlabel}][{i+1}:v]xfade=transition={t}:duration={fade_dur}:offset={offsets[i]:.2f}[{out_vlabel}]"
                     )
                     audio_filter_parts.append(
                         f"[{prev_alabel}][{i+1}:a]acrossfade=d={fade_dur}[{out_alabel}]"
@@ -249,7 +288,7 @@ class RenderService:
                     prev_alabel = out_alabel
                 else:
                     filter_parts.append(
-                        f"[{prev_vlabel}][{i+1}:v]xfade=transition=fade:duration={fade_dur}:offset={offsets[i]:.2f}[vout]"
+                        f"[{prev_vlabel}][{i+1}:v]xfade=transition={t}:duration={fade_dur}:offset={offsets[i]:.2f}[vout]"
                     )
                     audio_filter_parts.append(
                         f"[{prev_alabel}][{i+1}:a]acrossfade=d={fade_dur}[aout]"

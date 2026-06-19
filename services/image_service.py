@@ -1,8 +1,9 @@
 """
 Image Service - Generates AI images for video scenes.
-Primary: Pollinations.ai POST API (free, no API key)
-Fallback 1: z-ai-generate CLI (if available)
-Fallback 2: FFmpeg gradient background
+Primary: z-ai-web-dev-sdk (high quality, scene-specific, available in Docker)
+Fallback 1: Pollinations.ai POST API (free, no API key)
+Fallback 2: Pollinations.ai GET API
+Fallback 3: FFmpeg gradient background
 """
 
 import asyncio
@@ -22,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 IMAGE_WIDTH = 1080
 IMAGE_HEIGHT = 1920
+
+# z-ai SDK requires dimensions that are:
+#   - each side between 512 and 2880
+#   - each side a multiple of 32
+#   - total pixels <= 2^22 (4,194,304)
+# 1088x1920 = 2,088,960 pixels - within limits
+ZAI_IMAGE_WIDTH = 1088
+ZAI_IMAGE_HEIGHT = 1920
 
 CACHE_DIR = os.environ.get("CACHE_DIR", "/tmp/reele_cache/images")
 
@@ -59,7 +68,11 @@ def _cache_path(prompt: str) -> str:
 
 
 async def generate_scene_image(prompt: str, scene_type: str = "fact", scene_number: int = 1) -> str:
-    """Generate an AI image for a scene. Each scene gets its own unique image."""
+    """Generate an AI image for a scene. Each scene gets its own unique image.
+
+    Tries z-ai-web-dev-sdk first (best quality, scene-specific), then falls back
+    to Pollinations.ai, then to a gradient background.
+    """
     cached = _cache_path(prompt)
     if os.path.exists(cached) and os.path.getsize(cached) > 1000:
         logger.info(f"Image cache hit for scene {scene_number}: {prompt[:50]}...")
@@ -67,23 +80,100 @@ async def generate_scene_image(prompt: str, scene_type: str = "fact", scene_numb
 
     enhanced = _enhance_prompt(prompt, scene_type)
 
+    # PRIMARY: z-ai-web-dev-sdk (best quality, actually follows the prompt)
+    result = await _try_zai_sdk(enhanced, cached)
+    if result:
+        return result
+
+    # FALLBACK 1: Pollinations POST
     result = await _try_pollinations_post(enhanced, cached)
     if result:
         return result
 
+    # FALLBACK 2: Pollinations GET
     result = await _try_pollinations_get(enhanced, cached)
     if result:
         return result
 
+    # FALLBACK 3: Old z-ai-generate CLI (if installed)
     result = _try_zai_generate(enhanced, cached)
     if result:
         return result
 
+    # LAST RESORT: Gradient background
     result = _generate_gradient(cached, scene_type, scene_number)
     if result:
         return result
 
     raise RuntimeError(f"All image generation methods failed for prompt: {prompt[:50]}")
+
+
+async def _try_zai_sdk(prompt: str, output_path: str) -> Optional[str]:
+    """Generate image using z-ai-web-dev-sdk via a Node.js subprocess.
+
+    z-ai actually follows the prompt and produces scene-specific images,
+    unlike Pollinations which often returns generic abstract images.
+    """
+    # Write a small Node.js script that calls z-ai-web-dev-sdk
+    script = f"""import ZAI from 'z-ai-web-dev-sdk';
+import fs from 'fs';
+
+async function main() {{
+  try {{
+    const zai = await ZAI.create();
+    const response = await zai.images.generations.create({{
+      prompt: {json.dumps(prompt)},
+      size: '{ZAI_IMAGE_WIDTH}x{ZAI_IMAGE_HEIGHT}',
+    }});
+    const b64 = response.data[0].base64;
+    const buf = Buffer.from(b64, 'base64');
+    fs.writeFileSync({json.dumps(output_path)}, buf);
+    console.log('OK ' + buf.length);
+  }} catch (e) {{
+    console.error('ERR ' + e.message);
+    process.exit(1);
+  }}
+}}
+main();
+"""
+    script_path = output_path + ".mjs"
+    try:
+        with open(script_path, "w") as f:
+            f.write(script)
+
+        logger.info(f"Trying z-ai-web-dev-sdk for: {prompt[:60]}...")
+
+        # Run with bun (faster) or node (fallback)
+        runner = "bun" if subprocess.run(["which", "bun"], capture_output=True).returncode == 0 else "node"
+        env = os.environ.copy()
+        env["NODE_PATH"] = "/usr/lib/node_modules:" + env.get("NODE_PATH", "")
+
+        result = subprocess.run(
+            [runner, script_path],
+            capture_output=True, text=True, timeout=120, env=env
+        )
+
+        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 5000:
+            logger.info(f"z-ai SDK generated image: {output_path} ({os.path.getsize(output_path)} bytes)")
+            # Resize to exact 1080x1920 if needed (z-ai returns 1088x1920)
+            final = _resize_to_vertical(output_path, output_path)
+            return final or output_path
+        else:
+            err = (result.stderr or result.stdout or "")[:300]
+            logger.warning(f"z-ai SDK failed: {err}")
+
+    except subprocess.TimeoutExpired:
+        logger.warning("z-ai SDK timed out")
+    except Exception as e:
+        logger.warning(f"z-ai SDK error: {e}")
+    finally:
+        try:
+            if os.path.exists(script_path):
+                os.remove(script_path)
+        except:
+            pass
+
+    return None
 
 
 def _enhance_prompt(prompt: str, scene_type: str) -> str:
@@ -103,18 +193,22 @@ async def _try_pollinations_post(prompt: str, output_path: str) -> Optional[str]
     try:
         logger.info(f"Trying Pollinations.ai POST for: {prompt[:60]}...")
 
+        # Deterministic seed based on prompt hash so each unique prompt always
+        # produces the same image (consistency across regenerations)
+        seed = int(hashlib.md5(prompt.lower().strip().encode()).hexdigest()[:8], 16) % 999999
+
         payload = {
             "prompt": prompt,
-            "width": 768,
-            "height": 1344,
+            "width": 1080,
+            "height": 1920,
             "nologo": True,
-            "seed": random.randint(1, 999999),
+            "seed": seed,
             "enhance": True,
             "model": "flux",
         }
 
         async with httpx.AsyncClient(
-            timeout=90.0,
+            timeout=120.0,
             follow_redirects=True,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -157,14 +251,15 @@ async def _try_pollinations_get(prompt: str, output_path: str) -> Optional[str]:
     try:
         import urllib.parse
         encoded_prompt = urllib.parse.quote(prompt)
-        seed = random.randint(1, 999999)
+        # Deterministic seed for consistency
+        seed = int(hashlib.md5(prompt.lower().strip().encode()).hexdigest()[:8], 16) % 999999
 
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&nologo=true&seed={seed}&model=flux"
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={IMAGE_WIDTH}&height={IMAGE_HEIGHT}&nologo=true&seed={seed}&model=flux&enhance=true"
 
         logger.info(f"Trying Pollinations.ai GET for: {prompt[:50]}...")
 
         async with httpx.AsyncClient(
-            timeout=90.0,
+            timeout=120.0,
             follow_redirects=True,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

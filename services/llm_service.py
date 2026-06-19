@@ -43,12 +43,17 @@ Style: {style}
 Return a JSON array of scene objects with these fields:
 - scene_number (int)
 - scene_type (one of: hook, fact, story, insight, cta)
-- text (narration, 1-2 punchy sentences)
-- image_prompt (detailed cinematic visual description for AI image generation, include lighting, mood, composition, colors - make each scene's image prompt unique and visually distinct)
+- text (narration, 1-2 punchy sentences - MUST contain specific facts, numbers, or examples about {topic}, NOT generic statements)
+- image_prompt (CRITICAL: a CONCRETE, photographable visual description that depicts what THIS SPECIFIC SCENE'S text is talking about - e.g. if text mentions "CO2", image_prompt should be "macro photograph of mosquito with visible breath vapor clouds" - DO NOT write abstract or topic-generic prompts - each scene's image_prompt MUST be unique and depict the specific fact/concept mentioned in the text - include concrete objects, actions, scenes, lighting, mood, colors)
 - search_query (3-4 keywords for stock video search)
 - duration_hint (3-8 seconds)
 
-First scene must be a hook. Last scene must be a CTA. Return ONLY the JSON array."""
+RULES:
+1. First scene MUST be a hook. Last scene MUST be a CTA.
+2. Each scene's text MUST contain a SPECIFIC fact about {topic} (with numbers, examples, or concrete details) - NOT generic statements like "there's a hidden side"
+3. Each scene's image_prompt MUST depict the SPECIFIC content of that scene's text - if text says "X attracts Y", the image should show X and Y together
+4. NEVER write image_prompt as just the topic name - always describe a specific photographable scene
+5. Return ONLY the JSON array, no other text."""
 
     payload = {
         "contents": [
@@ -103,7 +108,7 @@ def _generate_topic_scenes(topic: str, style: str, num_scenes: int) -> List[Dict
         "scene_number": 1,
         "scene_type": "hook",
         "text": hook_text,
-        "image_prompt": _generate_image_prompt(topic, "hook", 1),
+        "image_prompt": _generate_image_prompt(hook_text, topic, "hook", 1),
         "search_query": "".join(topic.split()[:3]).lower(),
         "duration_hint": 4
     })
@@ -124,7 +129,7 @@ def _generate_topic_scenes(topic: str, style: str, num_scenes: int) -> List[Dict
             "scene_number": i + 2,
             "scene_type": scene_type,
             "text": fact_data["text"],
-            "image_prompt": _generate_image_prompt(topic, scene_type, i + 2),
+            "image_prompt": _generate_image_prompt(fact_data["text"], topic, scene_type, i + 2),
             "search_query": fact_data.get("search_query", topic.replace(" ", "")),
             "duration_hint": 5 if scene_type == "fact" else 6
         })
@@ -144,7 +149,7 @@ def _generate_topic_scenes(topic: str, style: str, num_scenes: int) -> List[Dict
         "scene_number": num_scenes,
         "scene_type": "cta",
         "text": cta_text,
-        "image_prompt": _generate_image_prompt(topic, "cta", num_scenes),
+        "image_prompt": _generate_image_prompt(cta_text, topic, "cta", num_scenes),
         "search_query": "".join(topic.split()[:2]).lower(),
         "duration_hint": 4
     })
@@ -269,36 +274,27 @@ def _generate_generic_facts(topic: str) -> List[Dict]:
     return selected
 
 
-def _generate_image_prompt(topic: str, scene_type: str, scene_number: int) -> str:
-    """Generate a unique, cinematic image prompt for a topic and scene type."""
-    visual_map = {
-        "hook": [
-            "dramatic close-up, bold composition, eye-catching, intense colors, dark moody background",
-            "striking macro shot, vivid contrast, mysterious atmosphere, cinematic lighting from above",
-            "dynamic angle, sharp focus, high contrast, dramatic shadows, professional photography",
-        ],
-        "fact": [
-            "clean composition, informative feel, clear subject isolation, soft bokeh background, studio lighting",
-            "detailed visualization, sharp detail, clean background gradient, scientific aesthetic, 4K macro",
-            "documentary style, natural lighting, authentic feel, shallow depth of field, professional quality",
-        ],
-        "story": [
-            "narrative scene, emotional mood, warm golden hour lighting, cinematic wide shot, atmospheric haze",
-            "storytelling composition, dramatic silhouette, sunset backlight, movie still quality, evocative",
-            "intimate close-up, emotional depth, Rembrandt lighting, rich color palette, film grain texture",
-        ],
-        "insight": [
-            "inspiring composition, ethereal glow, surreal atmosphere, dreamy soft focus, heavenly light rays",
-            "thought-provoking scene, contemplative mood, soft ambient lighting, artistic interpretation, magical",
-            "enlightening visualization, radiant energy, prismatic light, transcendent quality, visionary art",
-        ],
-        "cta": [
-            "bold dynamic composition, action-oriented, vibrant energy, dramatic perspective, powerful stance",
-            "attention-grabbing, high impact, electrifying colors, explosive composition, compelling visual",
-            "dynamic motion, powerful presence, intense focus, commanding attention, strong visual impact",
-        ],
-    }
+def _generate_image_prompt(scene_text: str, topic: str, scene_type: str, scene_number: int) -> str:
+    """Generate a scene-specific image prompt that visually depicts what the scene is actually about.
 
+    CRITICAL: This function looks at the SCENE TEXT (not just the topic) to extract concrete
+    visual concepts. Each scene must have a unique, specific, photographable visual - not an
+    abstract topic-generic background.
+    """
+    # Step 1: Extract concrete visual concept from scene text
+    visual_concept = _extract_visual_concept(scene_text, topic, scene_type)
+
+    # Step 2: Apply scene-type-specific style modifiers
+    style_modifiers = {
+        "hook": "dramatic cinematic close-up, intense contrast, eye-catching composition, dark moody atmosphere, professional photography",
+        "fact": "scientific macro photography, ultra-detailed, professional documentary style, sharp focus, shallow depth of field",
+        "story": "narrative scene, emotional mood, warm golden hour lighting, cinematic storytelling, atmospheric haze",
+        "insight": "thought-provoking surreal composition, ethereal glow, inspiring atmosphere, dreamy soft focus",
+        "cta": "dynamic composition, action-oriented, vibrant energy, dramatic perspective, compelling visual impact",
+    }
+    style = style_modifiers.get(scene_type, style_modifiers["fact"])
+
+    # Step 3: Vary color palette per scene for visual variety
     color_palettes = [
         "deep purple and electric blue",
         "warm amber and rich burgundy",
@@ -309,15 +305,144 @@ def _generate_image_prompt(topic: str, scene_type: str, scene_number: int) -> st
         "forest green and warm copper",
         "arctic blue and soft pink",
     ]
+    colors = color_palettes[(scene_number - 1) % len(color_palettes)]
 
-    visuals = visual_map.get(scene_type, visual_map["fact"])
-    visual_idx = (abs(hash(topic.lower() + scene_type)) + scene_number) % len(visuals)
-    color_idx = (scene_number - 1) % len(color_palettes)
+    return (
+        f"{visual_concept}, {style}, {colors} color palette, "
+        f"cinematic lighting, ultra detailed, 4K quality, professional photography, "
+        f"vertical 9:16 composition, sharp focus, high detail, no text, no watermark"
+    )
 
-    visual = visuals[visual_idx]
-    colors = color_palettes[color_idx]
 
-    return f"{topic}, {visual}, {colors} color palette, cinematic lighting, ultra detailed, 4K quality, professional photography, vertical composition"
+def _extract_visual_concept(scene_text: str, topic: str, scene_type: str) -> str:
+    """Extract a concrete, photographable visual description from the scene text.
+
+    Uses keyword matching to find specific visual concepts mentioned in the scene,
+    falling back to a topic-aware concrete visual when no keyword matches.
+    """
+    text_lower = (scene_text or "").lower()
+    topic_lower = (topic or "").lower()
+
+    # Comprehensive keyword -> concrete visual mapping
+    # Each entry is (keyword, visual_description) - the visual MUST be specific and photographable
+    visual_mappings = [
+        # === Mosquito / insect visuals ===
+        ("carbon dioxide", "macro photograph of a mosquito in flight with visible breath vapor clouds in cold air, scientific visualization of invisible CO2 gas waves around a person"),
+        ("co2", "macro photograph of a mosquito in flight with visible breath vapor clouds in cold air, scientific visualization of invisible CO2 gas waves around a person"),
+        ("blood type", "extreme close-up of mosquito proboscis piercing human skin, single blood droplet with scientific label overlay showing blood type, medical illustration style"),
+        ("type o", "extreme close-up of mosquito proboscis piercing human skin, single blood droplet with scientific label overlay showing blood type O, medical illustration style"),
+        ("type a", "extreme close-up of mosquito proboscis piercing human skin, single blood droplet with scientific label overlay showing blood type A, medical illustration style"),
+        ("bacteria", "microscope view of glowing bacteria colonies on skin surface, scientific illustration with blue and purple fluorescent tones, microbiology aesthetic"),
+        ("skin bacteria", "microscope view of glowing bacteria colonies on human skin, scientific illustration with blue and purple fluorescent tones"),
+        ("dark clothing", "split image showing person in black shirt surrounded by mosquitoes next to person in white shirt with none, twilight outdoor setting"),
+        ("dark colors", "split image showing person in black shirt surrounded by mosquitoes next to person in white shirt with none, twilight outdoor setting"),
+        ("beer", "frosted beer glass with condensation droplets on a wooden bar, mosquito hovering near the glass, warm amber bar lighting"),
+        ("alcohol", "frosted beer glass with condensation droplets, mosquito hovering nearby, warm bar lighting"),
+        ("pregnant", "elegant silhouette of pregnant woman in golden hour backlight, soft maternal glow, mosquitoes faintly visible in soft focus background"),
+        ("body heat", "thermal imaging photograph of person showing heat zones, warm orange and red glow on body, mosquitoes attracted to heat signature"),
+        ("sweat", "close-up of athlete sweating during outdoor workout, droplets glistening on skin, mosquito in soft focus background"),
+        ("mosquito", "ultra-detailed macro photograph of mosquito on human skin, compound eyes visible, golden hour lighting"),
+
+        # === Brain / neuroscience visuals ===
+        ("electricity", "glowing neural pathways inside human brain, electrical sparks between neurons, bioluminescent blue glow, dark background"),
+        ("light bulb", "human brain rendered as glowing light bulb filaments, warm electrical glow emanating from within, dark scientific background"),
+        ("lightbulb", "human brain rendered as glowing light bulb filaments, warm electrical glow emanating from within, dark scientific background"),
+        ("subconscious", "split-view illustration of brain showing conscious surface and deep subconscious layers, ethereal mist, scientific surreal"),
+        ("7 seconds", "high-speed photograph of brain processing visual information, motion blur trails of neural activity, neon data streams"),
+        ("13 milliseconds", "high-speed photograph of brain processing visual information, motion blur trails of neural activity, neon data streams"),
+        ("memory", "human brain with glowing memory fragments floating around it, dreamlike atmosphere, golden particles, surreal"),
+        ("recall", "human brain with glowing memory fragments floating around it, dreamlike atmosphere, golden particles, surreal"),
+        ("dream", "person sleeping with translucent dream imagery floating above head, soft moonlight, surreal atmosphere"),
+        ("glymphatic", "scientific illustration of brain fluid cleaning system, blue fluid flowing through neural pathways, microscopic view"),
+        ("brain", "anatomical human brain glowing with bioluminescent neural activity, scientific illustration, dark background"),
+
+        # === Space / astronomy visuals ===
+        ("venus", "planet Venus rotating slowly in space, thick yellow atmospheric clouds, sun in distance, NASA photograph style"),
+        ("stars", "deep space photograph of countless stars in Milky Way galaxy, nebula clouds in purple and pink, long exposure"),
+        ("neutron star", "scientific illustration of incredibly dense neutron star, glowing blue-white with intense gravity lensing, space backdrop"),
+        ("sound", "visualization of sound waves dissipating in vacuum of space, scientific illustration, dark cosmos background"),
+        ("vacuum", "astronaut floating in absolute emptiness of space, no stars, no sound, infinite black void"),
+        ("black hole", "scientific visualization of black hole with accretion disk, gravitational lensing bending light, interstellar style"),
+        ("mars", "red rocky surface of Mars with rover tracks, dusty orange atmosphere, NASA photograph"),
+        ("moon", "close-up of lunar surface with craters, earth visible in distance, NASA Apollo photograph style"),
+
+        # === Ocean visuals ===
+        ("mariana trench", "deep ocean trench with bioluminescent creatures, pitch black with rare glowing organisms, scientific deep sea photograph"),
+        ("everest", "Mount Everest summit rendered underwater with schools of fish swimming around it, surreal scientific illustration"),
+        ("mount everest", "Mount Everest summit rendered underwater with schools of fish swimming around it, surreal scientific illustration"),
+        ("phytoplankton", "microscopic view of glowing blue phytoplankton, ocean water sample, bioluminescent microorganisms"),
+        ("oxygen", "underwater photograph of phytoplankton releasing oxygen bubbles, blue bioluminescent glow, scientific"),
+        ("underwater river", "surreal photograph of underwater river on ocean floor with visible shoreline and methane ice trees, deep sea scientific"),
+        ("ocean", "deep ocean photograph with sun rays piercing through blue water, mysterious depths below, professional underwater photography"),
+
+        # === Sleep visuals ===
+        ("rem sleep", "person sleeping with EEG brainwave visualization overlay, REM phase indicator, soft bedroom lighting"),
+        ("paralyzed", "silhouette of person sleeping with translucent ghostly figure showing paralysis, dreamlike atmosphere"),
+        ("hallucinating", "surreal image of sleep-deprived person seeing shadowy figures, distorted perception, psychological horror aesthetic"),
+        ("11 days", "exhausted person at desk with clock showing 264 hours, dark circles under eyes, dim lighting"),
+        ("sleep", "peaceful person sleeping in soft moonlit bedroom, gentle blue light, calm serene atmosphere"),
+
+        # === Dog visuals ===
+        ("sense of smell", "close-up of dog's wet nose with scent particle visualization, scientific illustration of olfactory receptors"),
+        ("nose print", "extreme close-up of dog's nose with unique pattern, scientific comparison to fingerprint, macro photography"),
+        ("cancer", "dog sniffing patient's hand in medical setting, scientific visualization of disease detection, hopeful atmosphere"),
+        ("dream", "sleeping dog with paw twitching, translucent dream bubble showing running rabbit, warm lighting"),
+        ("dog", "professional portrait of golden retriever with intelligent eyes, soft natural lighting, shallow depth of field"),
+
+        # === Coffee visuals ===
+        ("traded commodity", "stacks of coffee bean bags in warehouse next to oil barrels, global trade visualization, industrial lighting"),
+        ("espresso", "close-up of espresso machine pouring rich crema into small cup, steam rising, dark café atmosphere"),
+        ("caffeine", "molecular visualization of caffeine molecule next to coffee cup, scientific illustration, blue glow"),
+        ("coffee cherry", "close-up of bright red coffee cherries on branch, lush green plantation background, agricultural photography"),
+        ("finland", "cozy Finnish cabin in snow with person drinking coffee by fire window, warm interior glow, winter scene"),
+        ("coffee", "artisan barista pouring latte art into cup, rich brown crema, café atmosphere, professional food photography"),
+
+        # === Water visuals ===
+        ("71%", "Earth viewed from space showing blue oceans dominating the surface, NASA photograph, scientific"),
+        ("fresh water", "crystal clear mountain stream flowing over rocks, pristine wilderness, golden hour lighting"),
+        ("mpemba", "scientific illustration of hot and cold water freezing, side-by-side beakers with temperature visualization"),
+        ("60% water", "human body silhouette with water percentage visualization, scientific anatomical illustration, blue tones"),
+        ("water", "macro photograph of water droplet hitting calm surface, ripples expanding, blue tones, high speed photography"),
+
+        # === Generic scientific visuals ===
+        ("scientists", "scientists in white lab coats examining specimen under microscope, laboratory setting, professional documentary photography"),
+        ("research", "scientist writing equations on glass board in modern laboratory, dramatic side lighting, documentary style"),
+        ("discovered", "scientist looking through telescope or microscope with expression of wonder, dramatic lighting, discovery moment"),
+        ("myth", "ancient mythology book open on table next to modern scientific journal, comparison visualization, atmospheric lighting"),
+        ("evolution", "evolutionary timeline illustration showing gradual species transformation, scientific, warm earth tones"),
+        ("data", "person analyzing data on multiple holographic screens, futuristic dashboard, blue and cyan tones"),
+        ("numbers", "macro photograph of numbers floating in space, abstract data visualization, cinematic lighting"),
+        ("statistics", "infographic style visualization with charts and graphs floating in 3D space, professional data presentation"),
+
+        # === Hook scene visuals ===
+        ("won't believe", "person with shocked expression looking at glowing discovery, dramatic spotlight, dark background"),
+        ("blow your mind", "explosion of colorful particles around human head silhouette, mind-blown visualization, vibrant colors"),
+        ("stop scrolling", "vertical smartphone screen with thumb frozen mid-scroll, dramatic lighting, social media concept"),
+        ("secret", "mysterious locked door with golden light spilling through keyhole, atmospheric, cinematic intrigue"),
+        ("hidden", "partially obscured object glowing softly in darkness, mysterious reveal, dramatic low-key lighting"),
+
+        # === CTA scene visuals ===
+        ("follow", "person pointing at follow button floating in air, social media interface, vibrant modern aesthetic"),
+        ("share", "hands passing glowing smartphone between two people, sharing concept, warm friendly lighting"),
+        ("comment", "person typing on phone with comment bubbles floating around, social media interaction, modern aesthetic"),
+        ("subscribe", "red subscribe button glowing with energy, call-to-action visual, dynamic composition"),
+    ]
+
+    # Check each keyword against the scene text
+    for keyword, visual in visual_mappings:
+        if keyword in text_lower:
+            return visual
+
+    # Fallback: build a concrete visual from the topic itself (not abstract)
+    # If topic mentions a specific subject, render that subject in a scene
+    topic_words = topic_lower.split()
+    if len(topic_words) >= 2:
+        # Use the topic as the visual subject with concrete photographic framing
+        return f"professional photograph of {topic}, clear subject in focus, blurred background, documentary style"
+    elif topic_lower:
+        return f"macro photograph of {topic}, dramatic lighting, ultra detailed, scientific aesthetic"
+
+    return "cinematic abstract visualization, professional photography"
 
 
 async def generate_facebook_caption(
