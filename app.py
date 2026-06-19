@@ -195,6 +195,7 @@ async def generate_video(
             watermark_text=actual_watermark,
             logo_path=logo_path,
             page_name=page_name,
+            topic=topic,
         )
 
         # Step 8: Facebook caption

@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # Force rebuild marker — bump on every deploy to invalidate Docker layer cache
-ENV REELE_V2_VERSION=2026-06-19-v3
+ENV REELE_V2_VERSION=2026-06-19-v4-engagement-overlay
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
