@@ -37,21 +37,59 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -euo pipefail
-          echo "=== Uploading to HF Space: tamusa2019/reele-video-engine ==="
-          hf upload \
-            --repo-type space \
-            --token "$HF_TOKEN" \
-            tamusa2019/reele-video-engine \
-            . \
-            . \
-            --commit-message "sync: from GitHub $GITHUB_SHA" \
-            --revision main
+          python3 << 'PYEOF_INNER'
+          import os, sys
+          from huggingface_hub import HfApi, CommitOperationAdd
+
+          token = os.environ["HF_TOKEN"]
+          repo_id = "tamusa2019/reele-video-engine"
+          api = HfApi(token=token)
+
+          # Verify space exists and token has access
+          try:
+              info = api.space_info(repo_id=repo_id)
+              print(f"Space exists: {repo_id} (id={info.id})")
+          except Exception as e:
+              print(f"ERROR: cannot access space {repo_id}: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          # Build commit operations: upload every file in the repo, preserving structure
+          operations = []
+          for root, dirs, files in os.walk("."):
+              # Skip .git and other non-source dirs
+              dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".github", "node_modules", ".venv")]
+              for fname in files:
+                  # Skip dotfiles and workflow yaml (already on github, don't push to HF)
+                  if fname.startswith(".") and fname not in (".gitignore",):
+                      continue
+                  if fname.endswith((".pyc", ".pyo")):
+                      continue
+                  local_path = os.path.join(root, fname)
+                  # Normalize path: remove leading ./
+                  if local_path.startswith("./"):
+                      local_path = local_path[2:]
+                  path_in_repo = local_path
+                  operations.append(CommitOperationAdd(
+                      path_in_repo=path_in_repo,
+                      path_or_fileobj=local_path,
+                  ))
+
+          print(f"Uploading {len(operations)} files to {repo_id} (single commit)")
+          result = api.create_commit(
+              repo_id=repo_id,
+              repo_type="space",
+              operations=operations,
+              commit_message=f"sync: from GitHub {os.environ.get('GITHUB_SHA', 'unknown')[:8]}",
+          )
+          print(f"SUCCESS: {result}")
+          PYEOF_INNER
           echo "=== Sync complete ==="
 
       - name: Check Space runtime status
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          sleep 5
           curl -sS \
             -H "Authorization: Bearer $HF_TOKEN" \
             https://huggingface.co/api/spaces/tamusa2019/reele-video-engine \
