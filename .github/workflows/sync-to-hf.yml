@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "=== Uploading to HF Space: tamusa2019/reele-video-engine ==="
-          huggingface-cli upload \
+          hf upload \
             --repo-type space \
             --token "$HF_TOKEN" \
             tamusa2019/reele-video-engine \
