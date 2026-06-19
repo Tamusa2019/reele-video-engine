@@ -172,6 +172,9 @@ async def generate_video(
             actual_watermark = f"@{page_name}"
         elif page_name and actual_watermark:
             actual_watermark = f"{actual_watermark} | @{page_name}"
+        elif not actual_watermark and not page_name:
+            # Default branding: always show a pill so the video feels branded
+            actual_watermark = "@reele"
 
         if logo_url:
             logo_path = await _download_logo(logo_url, job_id)

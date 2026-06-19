@@ -573,7 +573,16 @@ class RenderService:
 
         # --------------------------------------------------------------
         # Layer 2: Chapter badges per scene (skip first hook scene & last cta)
+        # Each badge = a filled purple rectangle (drawing mode) + white text on top.
+        # Using drawing-mode rect for reliable filled-background rendering across
+        # all libass versions (BorderStyle=3 can be unreliable).
         # --------------------------------------------------------------
+        BADGE_X = 40
+        BADGE_Y = 110
+        BADGE_H = 64
+        BADGE_PAD_X = 24
+        BADGE_FONT_SIZE = 36
+
         for i, scene in enumerate(scenes):
             scene_type = (scene.get("scene_type") or "").lower()
             # Skip badge on first hook scene (title card already there)
@@ -592,21 +601,46 @@ class RenderService:
             fi = 200
             fo = 300
 
-            # Use \an7 (top-left) anchor + \pos to place badge precisely.
-            # Badge box position: x=40, y=110 (below progress bar at top)
+            # Estimate badge width: ~0.58 * font_size * char_count + padding
+            badge_w = int(BADGE_FONT_SIZE * 0.58 * len(badge_label) + 2 * BADGE_PAD_X)
+            badge_w = max(badge_w, 120)  # minimum width
+
             badge_text = self._escape_ass(badge_label)
+
+            # Layer 2a: filled purple rectangle (drawing mode, \p1)
+            # \1a controls alpha (transparency); &H00 = opaque
+            rect_path = (
+                f"m {BADGE_X} {BADGE_Y} "
+                f"l {BADGE_X + badge_w} {BADGE_Y} "
+                f"l {BADGE_X + badge_w} {BADGE_Y + BADGE_H} "
+                f"l {BADGE_X} {BADGE_Y + BADGE_H}"
+            )
             lines.append(
                 f"Dialogue: 2,{self._fmt(s_start)},{self._fmt(s_end)},"
                 f"Badge,,0,0,0,,"
-                f"{{\\pos(50,120)\\fad({fi},{fo})\\an7}}"
+                f"{{\\pos(0,0)\\fad({fi},{fo})\\an7\\p1"
+                f"\\1c&H00{BRAND_PURPLE}&\\1a&H00&}}"
+                f"{rect_path}"
+                f"{{\\p0}}"
+            )
+            # Layer 2b: white text on top of the rectangle, centered in the badge
+            text_x = BADGE_X + badge_w // 2
+            text_y = BADGE_Y + BADGE_H // 2
+            lines.append(
+                f"Dialogue: 2,{self._fmt(s_start)},{self._fmt(s_end)},"
+                f"Badge,,0,0,0,,"
+                f"{{\\pos({text_x},{text_y})\\fad({fi},{fo})\\an5"
+                f"\\fs{BADGE_FONT_SIZE}\\b1\\1c{COLOR_WHITE}\\3c&H00{BRAND_PURPLE}&\\bord2}}"
                 f"{badge_text}"
             )
 
         # --------------------------------------------------------------
         # Layer 3: End-card text (last ENDCARD_DURATION)
+        # Always show end-card — use page_name if provided, else default to "REELE"
         # --------------------------------------------------------------
-        if scenes and page_name:
-            handle = page_name if page_name.startswith("@") else f"@{page_name}"
+        if scenes:
+            handle = page_name if page_name else "reele"
+            handle = handle if handle.startswith("@") else f"@{handle}"
             handle_text = self._escape_ass(handle)
             # FOLLOW FOR MORE (top of end-card stack)
             lines.append(
@@ -632,7 +666,14 @@ class RenderService:
 
         # --------------------------------------------------------------
         # Layer 4: Word-pop subtitles (whole video)
+        # Suppress subtitles during hook title card (first HOOK_DURATION) to
+        # avoid clutter — the hook card already shows the topic prominently.
+        # Also suppress during end-card (last ENDCARD_DURATION) so the CTA
+        # text is the focus.
         # --------------------------------------------------------------
+        hook_card_end = (scene_offsets[0] if scene_offsets else 0.0) + HOOK_DURATION
+        end_card_start = max(0.0, total_duration - ENDCARD_DURATION)
+
         for scene_idx, (scene, words) in enumerate(zip(scenes, all_word_alignments)):
             if not words:
                 continue
@@ -640,12 +681,35 @@ class RenderService:
             scene_offset = scene_offsets[scene_idx]
             scene_words = [w["word"] for w in words]
 
-            # Pre-wrap the scene's words into max 2 lines for cleaner display
-            line_chunks = self._chunk_words_for_subtitle(scene_words, max_chars=28)
+            # Pre-wrap the scene's words into max 2 lines for cleaner display.
+            # Use adaptive max_chars based on word count to avoid truncation.
+            num_words = len(scene_words)
+            if num_words <= 6:
+                max_chars = 32
+            elif num_words <= 10:
+                max_chars = 28
+            else:
+                max_chars = 34  # longer second line for many-word scenes
+            line_chunks = self._chunk_words_for_subtitle(scene_words, max_chars=max_chars)
 
             for w_idx, active_word in enumerate(words):
                 start_time = scene_offset + active_word["start"]
                 end_time = scene_offset + active_word["end"]
+
+                # Skip subtitles that fall within the hook title card window
+                if end_time <= hook_card_end:
+                    continue
+                # If the word starts during the hook card but ends after,
+                # clamp the start to when the hook card ends
+                if start_time < hook_card_end:
+                    start_time = hook_card_end
+                # Skip subtitles that fall within the end-card window
+                if start_time >= end_card_start:
+                    continue
+                if end_time > end_card_start:
+                    end_time = end_card_start
+                if start_time >= end_time:
+                    continue
 
                 # Build the displayed text with the active word highlighted + pop
                 # Each line is joined with \N; the active word is highlighted yellow
@@ -850,9 +914,15 @@ class RenderService:
     def _chunk_words_for_subtitle(
         self, words: List[str], max_chars: int = 28
     ) -> List[List[str]]:
-        """Split a scene's word list into at most 2 display chunks for subtitles."""
+        """Split a scene's word list into at most 2 balanced display chunks.
+
+        Uses a balanced split: finds the break point that makes the two lines
+        as equal in length as possible, while respecting max_chars per line.
+        """
         if not words:
             return [[]]
+
+        # First try: greedy fill (original algorithm)
         chunks: List[List[str]] = []
         current: List[str] = []
         current_len = 0
@@ -868,14 +938,30 @@ class RenderService:
         if current:
             chunks.append(current)
 
-        # Cap at 2 lines — keep first chunk as-is, merge the rest into one tail chunk
-        if len(chunks) > 2:
-            first = chunks[0]
-            rest: List[str] = []
-            for c in chunks[1:]:
-                rest.extend(c)
-            chunks = [first, rest]
-        return chunks[:2]
+        # If greedy produced 2 or fewer chunks, use it
+        if len(chunks) <= 2:
+            return chunks
+
+        # If greedy produced 3+ chunks, try a balanced 2-line split instead.
+        # Find the split point that minimizes the length difference between
+        # the two lines, while keeping each line under max_chars.
+        n = len(words)
+        total_len = sum(len(w) for w in words) + (n - 1)  # words + spaces
+        target = total_len / 2
+
+        best_split = n // 2  # default: split in half by word count
+        best_diff = float("inf")
+        for i in range(1, n):
+            line1 = " ".join(words[:i])
+            line2 = " ".join(words[i:])
+            if len(line1) > max_chars + 6 or len(line2) > max_chars + 6:
+                continue  # skip splits that make either line too long
+            diff = abs(len(line1) - len(line2))
+            if diff < best_diff:
+                best_diff = diff
+                best_split = i
+
+        return [words[:best_split], words[best_split:]]
 
     def _badge_label(self, scene_type: str, scene_idx: int, total_scenes: int) -> str:
         """Generate the chapter badge label for a scene."""
